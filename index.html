@@ -1068,7 +1068,130 @@
         }
         createTable();
     });
+// Mise à jour de la fonction toggleGroup
+function toggleGroup(groupId) {
+    const row = document.querySelector(`[data-group-id="${groupId}"]`);
+    if (!row) return;
+    
+    const wasCollapsed = row.classList.toggle('is-collapsed');
+    const level = parseInt(row.dataset.level || '0');
+    
+    let next = row.nextElementSibling;
+    while (next) {
+        const nextLevel = parseInt(next.dataset.level || '0');
+        if (nextLevel <= level) break;
+        
+        if (wasCollapsed) {
+            next.classList.add('is-hidden-by-parent');
+            // Sauvegarder l'état déplié si c'était un groupe déplié
+            if (next.classList.contains('group-row') && !next.classList.contains('is-collapsed')) {
+                next.dataset.wasExpanded = 'true';
+            }
+        } else {
+            next.classList.remove('is-hidden-by-parent');
+            // Restaurer l'état déplié précédent
+            if (next.classList.contains('group-row') && next.dataset.wasExpanded === 'true') {
+                next.classList.remove('is-collapsed');
+                next.removeAttribute('data-was-expanded');
+            }
+        }
+        next = next.nextElementSibling;
+    }
+}
 
+// Mise à jour de la partie qui crée les cellules dans createRows
+function createRows(items, level = 0) {
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        row.className = 'task-row';
+        if (item.hasError) {
+            row.classList.add('has-error');
+        }
+        row.dataset.level = level;
+        const currentRowId = rowId++;
+        row.dataset.groupId = currentRowId;
+
+        const hasSubItems = item.tasks && item.tasks.length > 0;
+        if (hasSubItems) {
+            row.classList.add('group-row');
+        }
+
+        const cell = document.createElement('td');
+        cell.className = `task-cell task-level-${level}`;
+
+        let cellContent = '';
+        // Ajouter l'icône de groupe avec le gestionnaire d'événements correct
+        if (hasSubItems) {
+            cellContent = `
+                <span class="group-icon" onclick="toggleGroup(${currentRowId}); event.stopPropagation();">
+                    <i class="fas fa-chevron-down"></i>
+                </span>
+            `;
+        } else {
+            cellContent = '<span class="group-icon"></span>';
+        }
+
+        cellContent += `<span class="group-name">${item.name}</span>`;
+
+        if (item.hasError || item.hasWarning) {
+            cellContent += `
+                <span class="error-tooltip">
+                    ${item.hasError ? 
+                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
+                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
+                    }
+                    <span class="error-message">
+                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
+                        <ul class="error-list">
+                            ${[...(item.errors || []), ...(item.warnings || [])].map(msg => `<li>${msg}</li>`).join('')}
+                        </ul>
+                    </span>
+                </span>
+            `;
+        }
+
+        cell.innerHTML = cellContent;
+        row.appendChild(cell);
+
+        // Reste du code pour les cellules de timeline...
+        [... reste du code de createRows inchangé ...]
+    });
+}
+
+// Ajout/Mise à jour des styles CSS nécessaires
+const additionalStyles = `
+.is-collapsed > .task-cell .group-icon i {
+    transform: rotate(-90deg);
+}
+
+.is-hidden-by-parent {
+    display: none !important;
+}
+
+.group-icon {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+.group-icon i {
+    transition: transform 0.2s ease;
+}
+
+.group-row .task-cell {
+    cursor: pointer;
+}
+
+.task-cell {
+    user-select: none;
+}
+`;
+    
 </script>
 </body>
 </html>

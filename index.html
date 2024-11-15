@@ -920,7 +920,108 @@ function createRows(items, level = 0) {
         }
     });
 }
-       
+
+function importData() {
+    if (!currentWorkbook) return;
+    
+    saveConfiguration();
+    
+    const mapping = {};
+    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+        mapping[field] = document.getElementById(`map_${field}`).value;
+    });
+    
+    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
+    
+    tasks = rawData.map(row => {
+        const errors = validateTask(row, mapping);
+        const startDate = new Date(row[columns[mapping.startDate]]);
+        const endDate = new Date(row[columns[mapping.endDate]]);
+        
+        return {
+            name: row[columns[mapping.name]] || '(Sans nom)',
+            subName: mapping.subName ? row[columns[mapping.subName]] : null,
+            priority: parseInt(row[columns[mapping.priority]]) || 3,
+            start: isNaN(startDate.getTime()) ? new Date() : startDate,
+            end: isNaN(endDate.getTime()) ? new Date() : endDate,
+            rawData: row,
+            errors: errors,
+            hasError: errors.length > 0
+        };
+    });
+    
+    createTable();
+    document.getElementById('importModal').classList.remove('is-active');
+}
+
+function validateTask(row, mapping) {
+    const errors = [];
+    
+    // Vérification du nom
+    if (!row[columns[mapping.name]]) {
+        errors.push("Nom manquant");
+    }
+
+    // Vérification de la date de début
+    const startDate = new Date(row[columns[mapping.startDate]]);
+    if (isNaN(startDate.getTime())) {
+        errors.push("Date de début invalide");
+    }
+
+    // Vérification de la date de fin
+    const endDate = new Date(row[columns[mapping.endDate]]);
+    if (isNaN(endDate.getTime())) {
+        errors.push("Date de fin invalide");
+    }
+
+    // Vérifie si les dates sont dans le bon ordre
+    if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && startDate > endDate) {
+        errors.push("La date de fin est antérieure à la date de début");
+    }
+
+    return errors;
+}
+
+function updateColumns() {
+    if (!currentWorkbook) return;
+    
+    const sheetSelect = document.getElementById('sheetSelect');
+    const sheet = currentWorkbook.Sheets[sheetSelect.value];
+    
+    // Récupérer toutes les colonnes, y compris celles masquées
+    const ref = XLSX.utils.decode_range(sheet['!ref']);
+    columns = [];
+    for(let C = ref.s.c; C <= ref.e.c; C++) {
+        const header = sheet[XLSX.utils.encode_cell({r:0, c:C})];
+        columns.push(header ? header.v : `Colonne ${C + 1}`);
+    }
+    
+    const savedConfig = loadConfiguration();
+    
+    const selects = ['name', 'subName', 'priority', 'startDate', 'endDate'];
+    selects.forEach(field => {
+        const select = document.getElementById(`map_${field}`);
+        select.innerHTML = `<option value="">Sélectionner...</option>` +
+            columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+            
+        if (savedConfig?.mapping?.[field] !== undefined) {
+            if (select.querySelector(`option[value="${savedConfig.mapping[field]}"]`)) {
+                select.value = savedConfig.mapping[field];
+            }
+        }
+    });
+    
+    const primaryKeySelect = document.getElementById('primaryKeySelect');
+    primaryKeySelect.innerHTML = columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+    if (savedConfig?.primaryKeyColumn !== undefined) {
+        if (primaryKeySelect.querySelector(`option[value="${savedConfig.primaryKeyColumn}"]`)) {
+            primaryKeySelect.value = savedConfig.primaryKeyColumn;
+            primaryKeyColumn = savedConfig.primaryKeyColumn;
+        }
+    }
+}
+        
     </script>
 </body>
 </html>

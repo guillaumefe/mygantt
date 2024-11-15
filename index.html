@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Gantt</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        .table-container {
+            height: calc(100vh - 100px);
+            overflow: auto;
+        }
+        .gantt-table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .gantt-table th {
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 1;
+            border: 1px solid #dbdbdb;
+            height: 27px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .gantt-table td {
+            border: 1px solid #dbdbdb;
+            min-width: 40px;
+            padding: 0;
+        }
+        .task-cell {
+            width: 500px;
+            padding: 0 0.5em !important;
+            position: sticky;
+            left: 0;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+        }
+        .group-row .task-cell {
+            height: 27px;
+            font-size: 14px;
+            font-weight: 500;
+            background: #f5f5f5;
+        }
+        .group-row .timeline-cell {
+            height: 27px;
+        }
+        .task-row:not(.group-row) .task-cell {
+            height: 70px;
+            font-size: 11px;
+            color: #666;
+            background: white;
+        }
+        .task-row:not(.group-row) .timeline-cell {
+            height: 18px;
+        }
+        .task-level-0 { padding-left: 0.5em !important; }
+        .task-level-1 { padding-left: 2.5em !important; }
+        .task-level-2 { padding-left: 4.5em !important; }
+        .task-level-3 { padding-left: 6.5em !important; }
+        .task-level-4 { padding-left: 8.5em !important; }
+        .task-bar {
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .priority-1 { background: #f56565; }
+        .priority-2 { background: #f6e05e; }
+        .priority-3 { background: #68d391; }
+        .priority-4 { background: #4299e1; }
+        .priority-5 { background: #a0aec0; }
+        .timeline-cell {
+            position: relative;
+            background: #fafafa;
+        }
+        .settings-fab {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 30;
+        }
+        .group-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        .group-icon {
+            width: 20px;
+            min-width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 8px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .group-row .group-icon {
+            font-size: 14px;
+        }
+        .task-row:not(.group-row) .group-icon {
+            font-size: 11px;
+        }
+        .is-collapsed > .task-cell .group-icon {
+            transform: rotate(-90deg);
+        }
+        .is-hidden-by-parent {
+            display: none;
+        }
+        .group-row .task-bar {
+            opacity: 0.7 !important;
+            height: 27px;
+        }
+        .task-row:not(.group-row) .task-bar {
+            opacity: 0.5 !important;
+            height: 18px;
+        }
+        .milestone {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid #ff3860;
+            cursor: pointer;
+            top: -12px;
+            transform: translateX(-50%);
+            z-index: 3;
+        }
+        .milestone:hover {
+            border-bottom-color: #ff1744;
+        }
+        .milestone-label {
+            position: absolute;
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #dbdbdb;
+            font-size: 10px;
+            white-space: nowrap;
+            z-index: 4;
+            display: none;
+        }
+        .milestone:hover .milestone-label {
+            display: block;
+        }
+        .milestone-menu {
+            position: fixed;
+            background: white;
+            border: 1px solid #dbdbdb;
+            border-radius: 4px;
+            padding: 0.5rem;
+            box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1);
+            z-index: 1000;
+            display: none;
+        }
+        .milestone-menu.is-active {
+            display: block;
+        }
+        .milestone-menu input {
+            margin-bottom: 0.5rem;
+        }
+        .milestone-menu button {
+            margin: 0.25rem;
+        }
+        .file-input-wrapper {
+            margin: 1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="file-input-wrapper">
+        <div class="file has-name">
+            <label class="file-label">
+                <input class="file-input" type="file" id="fileInput" accept=".xlsx,.xls">
+                <span class="file-cta">
+                    <span class="file-icon">
+                        <i class="fas fa-upload"></i>
+                    </span>
+                    <span class="file-label">
+                        Choisir un fichier
+                    </span>
+                </span>
+                <span class="file-name" id="fileName">
+                    Aucun fichier sélectionné
+                </span>
+            </label>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="gantt-table" id="ganttTable"></table>
+    </div>
+
+    <button class="button is-info is-rounded settings-fab" onclick="toggleSettings()">
+        <span class="icon">
+            <i class="fas fa-cog"></i>
+        </span>
+    </button>
+
+    <div class="modal" id="settingsMenu">
+        <div class="modal-background" onclick="toggleSettings()"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Paramètres</p>
+                <button class="delete" aria-label="close" onclick="toggleSettings()"></button>
+            </header>
+            <section class="modal-card-body">
+                <div class="field">
+                    <label class="label">Colonne clé primaire</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="primaryKeySelect" onchange="updatePrimaryKey(this.value)"></select>
+                        </div>
+                    </div>
+                </div>
+                <button class="button is-primary" onclick="showImportSettings()">
+                    Modifier les options d'import
+                </button>
+            </section>
+        </div>
+    </div>
+
+    <div class="modal" id="importModal">
+        <div class="modal-background" onclick="closeImportModal()"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Import Excel</p>
+                <button class="delete" aria-label="close" onclick="closeImportModal()"></button>
+            </header>
+            <section class="modal-card-body">
+                <div class="field">
+                    <label class="label">Sélectionnez l'onglet</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="sheetSelect"></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Sujet</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="map_name"></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Action</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="map_subName"></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Priorité</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="map_priority"></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Date début</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="map_startDate"></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">Date fin</label>
+                    <div class="control">
+                        <div class="select is-fullwidth">
+                            <select id="map_endDate"></select>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button is-success" onclick="importData()">Importer</button>
+                <button class="button" onclick="closeImportModal()">Annuler</button>
+            </footer>
+        </div>
+    </div>
+
+    <div class="milestone-menu" id="milestoneMenu">
+        <div class="field">
+            <input class="input is-small" type="text" id="milestoneName" placeholder="Nom du jalon">
+        </div>
+        <div class="field">
+            <input class="input is-small" type="date" id="milestoneDate">
+        </div>
+        <div class="buttons are-small">
+            <button class="button is-primary" onclick="saveMilestone()">Ajouter</button>
+            <button class="button is-danger" onclick="deleteMilestone()" id="deleteMilestoneBtn" style="display: none;">Supprimer</button>
+            <button class="button" onclick="closeMilestoneMenu()">Annuler</button>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG_KEY = 'gantt_import_config';
+        const MILESTONES_KEY = 'gantt_milestones';
+        let tasks = [];
+        let columns = [];
+        let primaryKeyColumn = 0;
+        let currentWorkbook = null;
+        let currentCell = null;
+        let currentMilestone = null;
+        const months = 24;
+
+        function saveConfiguration() {
+            const config = {
+                primaryKeyColumn,
+                mapping: {
+                    name: document.getElementById('map_name').value,
+                    subName: document.getElementById('map_subName').value,
+                    priority: document.getElementById('map_priority').value,
+                    startDate: document.getElementById('map_startDate').value,
+                    endDate: document.getElementById('map_endDate').value
+                },
+                lastSheet: document.getElementById('sheetSelect').value
+            };
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+        }
+
+        function loadConfiguration() {
+            const savedConfig = localStorage.getItem(CONFIG_KEY);
+            if (savedConfig) {
+                try {
+                    return JSON.parse(savedConfig);
+                } catch (e) {
+                    console.error('Erreur lors du chargement de la configuration:', e);
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        function applyConfiguration(config) {
+            if (!config) return;
+            if (config.primaryKeyColumn !== undefined) {
+                primaryKeyColumn = config.primaryKeyColumn;
+                const primaryKeySelect = document.getElementById('primaryKeySelect');
+                if (primaryKeySelect) {
+                    primaryKeySelect.value = config.primaryKeyColumn;
+                }
+            }
+            if (config.mapping) {
+                Object.entries(config.mapping).forEach(([field, value]) => {
+                    const select = document.getElementById(`map_${field}`);
+                    if (select && value !== undefined) {
+                        select.value = value;
+                    }
+                });
+            }
+            if (config.lastSheet) {
+                const sheetSelect = document.getElementById('sheetSelect');
+                if (sheetSelect) {
+                    sheetSelect.value = config.lastSheet;
+                }
+            }
+        }
+
+        function loadMilestones() {
+            const saved = localStorage.getItem(MILESTONES_KEY);
+            return saved ? JSON.parse(saved) : {};
+        }
+
+        function saveMilestones(milestones) {
+            localStorage.setItem(MILESTONES_KEY, JSON.stringify(milestones));
+        }
+
+        function createMilestoneElement(milestone, cell) {
+            const element = document.createElement('div');
+            element.className = 'milestone';
+            element.style.left = `${milestone.position}%`;
+           
+            const label = document.createElement('div');
+            label.className = 'milestone-label';
+            label.textContent = milestone.name;
+            element.appendChild(label);
+
+            element.addEventListener('contextmenu', (e) => showMilestoneMenu(e, milestone, cell));
+            return element;
+        }
+
+        function showMilestoneMenu(e, existingMilestone = null, cell = null) {
+            e.preventDefault();
+            const menu = document.getElementById('milestoneMenu');
+            currentCell = cell;
+            currentMilestone = existingMilestone;
+
+            menu.style.left = `${e.pageX}px`;
+            menu.style.top = `${e.pageY}px`;
+            menu.classList.add('is-active');
+
+            const nameInput = document.getElementById('milestoneName');
+            const dateInput = document.getElementById('milestoneDate');
+            const deleteBtn = document.getElementById('deleteMilestoneBtn');
+
+            if (existingMilestone) {
+                nameInput.value = existingMilestone.name;
+                dateInput.value = existingMilestone.date;
+                deleteBtn.style.display = 'block';
+            } else {
+                nameInput.value = '';
+                dateInput.value = '';
+                deleteBtn.style.display = 'none';
+            }
+        }
+
+        function closeMilestoneMenu() {
+            document.getElementById('milestoneMenu').classList.remove('is-active');
+            currentCell = null;
+            currentMilestone = null;
+        }
+
+        function saveMilestone() {
+            if (!currentCell) return;
+
+            const name = document.getElementById('milestoneName').value;
+            const date = document.getElementById('milestoneDate').value;
+            if (!name || !date) return;
+
+            const milestones = loadMilestones();
+            const cellId = currentCell.dataset.cellId;
+           
+            if (!milestones[cellId]) {
+                milestones[cellId] = [];
+            }
+
+            const milestone = {
+                id: currentMilestone?.id || Date.now(),
+                name,
+                date,
+                position: currentMilestone?.position || 50
+            };
+
+            if (currentMilestone) {
+                const index = milestones[cellId].findIndex(m => m.id === currentMilestone.id);
+                if (index !== -1) {
+                    milestones[cellId][index] = milestone;
+                }
+            } else {
+                milestones[cellId].push(milestone);
+            }
+
+            saveMilestones(milestones);
+            renderMilestones();
+            closeMilestoneMenu();
+        }
+
+        function deleteMilestone() {
+            if (!currentCell || !currentMilestone) return;
+
+            const milestones = loadMilestones();
+            const cellId = currentCell.dataset.cellId;
+           
+            if (milestones[cellId]) {
+                milestones[cellId] = milestones[cellId].filter(m => m.id !== currentMilestone.id);
+                saveMilestones(milestones);
+                renderMilestones();
+            }
+           
+            closeMilestoneMenu();
+        }
+
+        function renderMilestones() {
+            const milestones = loadMilestones();
+           
+            document.querySelectorAll('.milestone').forEach(m => m.remove());
+           
+            Object.entries(milestones).forEach(([cellId, cellMilestones]) => {
+                const cell = document.querySelector(`[data-cell-id="${cellId}"]`);
+                if (cell) {
+                    cellMilestones.forEach(milestone => {
+                        cell.appendChild(createMilestoneElement(milestone, cell));
+                    });
+                }
+            });
+        }
+
+        function toggleSettings() {
+            document.getElementById('settingsMenu').classList.toggle('is-active');
+        }
+
+        function closeImportModal() {
+            document.getElementById('importModal').classList.remove('is-active');
+        }
+
+        function updatePrimaryKey(columnIndex) {
+            primaryKeyColumn = parseInt(columnIndex);
+            createTable();
+        }
+
+        function toggleGroup(groupId) {
+            const row = document.querySelector(`[data-group-id="${groupId}"]`);
+            const wasCollapsed = row.classList.toggle('is-collapsed');
+            const level = parseInt(row.dataset.level || '0');
+           
+            let next = row.nextElementSibling;
+            while (next) {
+                const nextLevel = parseInt(next.dataset.level || '0');
+                if (nextLevel <= level) break;
+               
+                if (wasCollapsed) {
+                    next.classList.add('is-hidden-by-parent');
+                    if (next.classList.contains('group-row') && !next.classList.contains('is-collapsed')) {
+                        next.dataset.wasExpanded = 'true';
+                    }
+                    next.classList.add('is-collapsed');
+                } else {
+                    next.classList.remove('is-hidden-by-parent');
+                    if (next.classList.contains('group-row') && next.dataset.wasExpanded === 'true') {
+                        next.classList.remove('is-collapsed');
+                        next.removeAttribute('data-was-expanded');
+                    }
+                }
+                next = next.nextElementSibling;
+            }
+        }
+
+        function getDuration(task) {
+            return task.end.getTime() - task.start.getTime();
+        }
+
+        function getPrimaryKeyFromTask(task) {
+            const columnName = columns[primaryKeyColumn];
+            return String(task.rawData[columnName] || '');
+        }
+
+        function removeDuplicates(tasks) {
+            const uniqueTasks = new Map();
+            tasks.forEach(task => {
+                const key = getPrimaryKeyFromTask(task);
+                const existingTask = uniqueTasks.get(key);
+                if (!existingTask || getDuration(task) > getDuration(existingTask)) {
+                    uniqueTasks.set(key, task);
+                }
+            });
+            return Array.from(uniqueTasks.values());
+        }
+
+        function groupTasks(tasks) {
+            const groups = {};
+            tasks.forEach(task => {
+                const code = getPrimaryKeyFromTask(task);
+                if (!groups[code]) {
+                    groups[code] = {
+                        isGroup: true,
+                        name: code,
+                        priority: task.priority,
+                        start: new Date(task.start),
+                        end: new Date(task.end),
+                        tasks: []
+                    };
+                }
+                groups[code].tasks.push(task);
+                groups[code].start = new Date(Math.min(groups[code].start, task.start));
+                groups[code].end = new Date(Math.max(groups[code].end, task.end));
+            });
+            return Object.values(groups);
+        }
+
+        function createTable() {
+            const table = document.getElementById('ganttTable');
+            table.innerHTML = '';
+           
+            const thead = document.createElement('tr');
+            thead.innerHTML = `
+                <th class="task-cell has-background-white">Action</th>
+                ${Array.from({length: months}, (_, i) => {
+                    const date = new Date(2024, i, 1);
+                    return `<th class="has-text-centered">${date.toLocaleDateString('fr', {month: 'short', year: '2-digit'})}</th>`;
+                }).join('')}
+            `;
+            table.appendChild(thead);
+
+            let rowId = 0;
+            function createRows(items, level = 0) {
+                items.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.className = 'task-row';
+                    row.dataset.level = level;
+                    const currentRowId = rowId++;
+                    row.dataset.groupId = currentRowId;
+
+                    const hasSubItems = item.tasks && item.tasks.length > 0;
+                    if (hasSubItems) {
+                        row.classList.add('group-row');
+                    }
+
+                    const cell = document.createElement('td');
+                    cell.className = `task-cell task-level-${level}`;
+
+                    let cellContent = '';
+                    if (hasSubItems) {
+                        cellContent += `
+                            <span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
+                                <i class="fas fa-chevron-down"></i>
+                            </span>
+                        `;
+                    } else {
+                        cellContent += `<span class="group-icon"></span>`;
+                    }
+                    cellContent += `<span class="group-name">${item.name}</span>`;
+                    cell.innerHTML = cellContent;
+                    row.appendChild(cell);
+
+                    const startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+                    const endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+                   
+                    for (let i = 0; i < months; i++) {
+                        const timelineCell = document.createElement('td');
+                        timelineCell.className = 'timeline-cell';
+                        timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+                       
+                        if (i >= startMonth && i <= endMonth) {
+                            const bar = document.createElement('div');
+                            bar.className = `task-bar priority-${item.priority}`;
+                            bar.style.width = '100%';
+                            bar.style.opacity = level === 0 ? '0.3' : '0.8';
+                            timelineCell.appendChild(bar);
+                            timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+                        }
+                       
+                        row.appendChild(timelineCell);
+                    }
+                   
+                    table.appendChild(row);
+
+                    if (item.tasks) {
+                        const subItems = item.tasks.map(task => ({
+                            name: task.subName,
+                            priority: task.priority,
+                            start: task.start,
+                            end: task.end,
+                            tasks: []
+                        })).filter(task => task.name);
+                       
+                        if (subItems.length > 0) {
+                            createRows(subItems, level + 1);
+                        }
+                    }
+                });
+            }
+
+            const groupedTasks = groupTasks(tasks);
+            createRows(groupedTasks);
+            renderMilestones();
+        }
+
+        function showImportSettings() {
+            if (currentWorkbook) {
+                document.getElementById('importModal').classList.add('is-active');
+                document.getElementById('settingsMenu').classList.remove('is-active');
+            }
+        }
+
+        function updateColumns() {
+            if (!currentWorkbook) return;
+           
+            const sheetSelect = document.getElementById('sheetSelect');
+            const sheet = currentWorkbook.Sheets[sheetSelect.value];
+            columns = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0];
+           
+            const savedConfig = loadConfiguration();
+           
+            const selects = ['name', 'subName', 'priority', 'startDate', 'endDate'];
+            selects.forEach(field => {
+                const select = document.getElementById(`map_${field}`);
+                select.innerHTML = `<option value="">Sélectionner...</option>` +
+                    columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+                   
+                if (savedConfig?.mapping?.[field] !== undefined) {
+                    if (select.querySelector(`option[value="${savedConfig.mapping[field]}"]`)) {
+                        select.value = savedConfig.mapping[field];
+                    }
+                }
+            });
+           
+            const primaryKeySelect = document.getElementById('primaryKeySelect');
+            primaryKeySelect.innerHTML = columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+            if (savedConfig?.primaryKeyColumn !== undefined) {
+                if (primaryKeySelect.querySelector(`option[value="${savedConfig.primaryKeyColumn}"]`)) {
+                    primaryKeySelect.value = savedConfig.primaryKeyColumn;
+                    primaryKeyColumn = savedConfig.primaryKeyColumn;
+                }
+            }
+        }
+
+        function importData() {
+            if (!currentWorkbook) return;
+           
+            saveConfiguration();
+           
+            const mapping = {};
+            ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+                mapping[field] = document.getElementById(`map_${field}`).value;
+            });
+           
+            const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+            const rawData = XLSX.utils.sheet_to_json(sheet);
+            tasks = rawData
+                .filter(row => row[Object.keys(row)[mapping.name]])
+                .map(row => ({
+                    name: row[Object.keys(row)[mapping.name]],
+                    subName: mapping.subName ? row[Object.keys(row)[mapping.subName]] : null,
+                    priority: parseInt(row[Object.keys(row)[mapping.priority]]) || 3,
+                    start: new Date(row[Object.keys(row)[mapping.startDate]]),
+                    end: new Date(row[Object.keys(row)[mapping.endDate]]),
+                    rawData: row
+                }))
+                .filter(task => task.name && !isNaN(task.start) && !isNaN(task.end));
+           
+            createTable();
+            document.getElementById('importModal').classList.remove('is-active');
+        }
+
+        document.getElementById('fileInput').onchange = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('fileName').textContent = file.name;
+               
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const data = new Uint8Array(e.target.result);
+                    currentWorkbook = XLSX.read(data, {type: 'array'});
+                   
+                    const sheetSelect = document.getElementById('sheetSelect');
+                    sheetSelect.innerHTML = currentWorkbook.SheetNames.map(name =>
+                        `<option value="${name}">${name}</option>`
+                    ).join('');
+
+                    const savedConfig = loadConfiguration();
+                    if (savedConfig?.lastSheet && sheetSelect.querySelector(`option[value="${savedConfig.lastSheet}"]`)) {
+                        sheetSelect.value = savedConfig.lastSheet;
+                    }
+
+                    sheetSelect.onchange = updateColumns;
+                    updateColumns();
+                    document.getElementById('importModal').classList.add('is-active');
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        };
+
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('milestoneMenu');
+            if (!menu.contains(e.target)) {
+                closeMilestoneMenu();
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedConfig = loadConfiguration();
+            if (savedConfig) {
+                primaryKeyColumn = savedConfig.primaryKeyColumn;
+            }
+            createTable();
+        });
+       
+function validateTask(row, mapping) {
+    const errors = [];
+   
+    // Vérification du nom
+    if (!row[Object.keys(row)[mapping.name]]) {
+        errors.push("Nom manquant");
+    }
+
+    // Vérification de la date de début
+    const startDate = new Date(row[Object.keys(row)[mapping.startDate]]);
+    if (isNaN(startDate.getTime())) {
+        errors.push("Date de début invalide");
+    }
+
+    // Vérification de la date de fin
+    const endDate = new Date(row[Object.keys(row)[mapping.endDate]]);
+    if (isNaN(endDate.getTime())) {
+        errors.push("Date de fin invalide");
+    }
+
+    // Vérifie si les dates sont dans le bon ordre
+    if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && startDate > endDate) {
+        errors.push("La date de fin est antérieure à la date de début");
+    }
+
+    return errors;
+}
+
+function importData() {
+    if (!currentWorkbook) return;
+   
+    saveConfiguration();
+   
+    const mapping = {};
+    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+        mapping[field] = document.getElementById(`map_${field}`).value;
+    });
+   
+    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+    const rawData = XLSX.utils.sheet_to_json(sheet);
+   
+    tasks = rawData.map(row => {
+        const errors = validateTask(row, mapping);
+        const startDate = new Date(row[Object.keys(row)[mapping.startDate]]);
+        const endDate = new Date(row[Object.keys(row)[mapping.endDate]]);
+       
+        return {
+            name: row[Object.keys(row)[mapping.name]] || '(Sans nom)',
+            subName: mapping.subName ? row[Object.keys(row)[mapping.subName]] : null,
+            priority: parseInt(row[Object.keys(row)[mapping.priority]]) || 3,
+            start: isNaN(startDate.getTime()) ? new Date() : startDate,
+            end: isNaN(endDate.getTime()) ? new Date() : endDate,
+            rawData: row,
+            errors: errors,
+            hasError: errors.length > 0
+        };
+    });
+   
+    createTable();
+    document.getElementById('importModal').classList.remove('is-active');
+}
+
+function createRows(items, level = 0) {
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        row.className = 'task-row';
+        if (item.hasError) {
+            row.classList.add('has-error');
+        }
+        row.dataset.level = level;
+        const currentRowId = rowId++;
+        row.dataset.groupId = currentRowId;
+
+        const hasSubItems = item.tasks && item.tasks.length > 0;
+        if (hasSubItems) {
+            row.classList.add('group-row');
+        }
+
+        const cell = document.createElement('td');
+        cell.className = `task-cell task-level-${level}`;
+
+        let cellContent = '';
+        if (hasSubItems) {
+            cellContent += `
+                <span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
+                    <i class="fas fa-chevron-down"></i>
+                </span>
+            `;
+        } else {
+            cellContent += `<span class="group-icon"></span>`;
+        }
+       
+        cellContent += `<span class="group-name">${item.name}</span>`;
+       
+        if (item.hasError) {
+            cellContent += `
+                <span class="error-tooltip">
+                    <i class="fas fa-exclamation-circle error-icon"></i>
+                    <span class="error-message">
+                        Erreurs détectées:
+                        <ul class="error-list">
+                            ${item.errors.map(error => `<li>${error}</li>`).join('')}
+                        </ul>
+                    </span>
+                </span>
+            `;
+        }
+       
+        cell.innerHTML = cellContent;
+        row.appendChild(cell);
+
+        const startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+        const endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+       
+        for (let i = 0; i < months; i++) {
+            const timelineCell = document.createElement('td');
+            timelineCell.className = 'timeline-cell';
+            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+           
+            if (i >= startMonth && i <= endMonth) {
+                const bar = document.createElement('div');
+                bar.className = `task-bar priority-${item.priority}`;
+                bar.style.width = '100%';
+                bar.style.opacity = level === 0 ? '0.3' : '0.8';
+                timelineCell.appendChild(bar);
+                timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+            }
+           
+            row.appendChild(timelineCell);
+        }
+       
+        table.appendChild(row);
+
+        if (item.tasks) {
+            const subItems = item.tasks.map(task => ({
+                name: task.subName,
+                priority: task.priority,
+                start: task.start,
+                end: task.end,
+                tasks: [],
+                errors: task.errors,
+                hasError: task.hasError
+            })).filter(task => task.name);
+           
+            if (subItems.length > 0) {
+                createRows(subItems, level + 1);
+            }
+        }
+    });
+}
+       
+    </script>
+</body>
+</html>
+               

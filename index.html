@@ -50,7 +50,6 @@
             height: 27px;
         }
         .task-row:not(.group-row) .task-cell {
-
             font-size: 11px;
             color: #666;
             background: white;
@@ -127,10 +126,16 @@
             border-left: 6px solid transparent;
             border-right: 6px solid transparent;
             border-bottom: 12px solid #ff3860;
-            cursor: pointer;
+            cursor: move;
             top: -12px;
             transform: translateX(-50%);
             z-index: 3;
+            transition: border-bottom-color 0.2s ease;
+        }
+        .milestone.dragging {
+            border-bottom-color: #ff1744;
+            opacity: 0.8;
+            z-index: 1000;
         }
         .milestone:hover {
             border-bottom-color: #ff1744;
@@ -157,24 +162,15 @@
             background: white;
             border: 1px solid #dbdbdb;
             border-radius: 4px;
-            padding: 0.5rem;
+            padding: 0.75rem;
             box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1);
             z-index: 1000;
+            min-width: 200px;
             display: none;
         }
         .milestone-menu.is-active {
             display: block;
         }
-        .milestone-menu input {
-            margin-bottom: 0.5rem;
-        }
-        .milestone-menu button {
-            margin: 0.25rem;
-        }
-        .file-input-wrapper {
-            margin: 1em;
-        }
-        /* Ajouter aux styles existants */
         .task-bar.is-invalid {
             background: repeating-linear-gradient(
                 45deg,
@@ -185,7 +181,6 @@
             );
             opacity: 0.5 !important;
         }
-        
         .task-bar.date-missing {
             background: repeating-linear-gradient(
                 45deg,
@@ -196,22 +191,24 @@
             );
             opacity: 0.3 !important;
         }
-        
         .task-cell .status-icon {
             margin-left: 8px;
             font-size: 12px;
         }
-        
         .task-cell .invalid-dates {
             color: #ff3860;
         }
-        
         .task-cell .missing-dates {
             color: #ffdd57;
         }
+        .error-message {
+            color: #ff3860;
+            font-size: 12px;
+            margin-top: 4px;
+        }
     </style>
-</head>
-<body>
+    </head>
+    <body>
     <div class="file-input-wrapper">
         <div class="file has-name">
             <label class="file-label">
@@ -341,1172 +338,737 @@
             <button class="button" onclick="closeMilestoneMenu()">Annuler</button>
         </div>
     </div>
-
     <script>
-        const CONFIG_KEY = 'gantt_import_config';
-        const MILESTONES_KEY = 'gantt_milestones';
-        let tasks = [];
-        let columns = [];
-        let primaryKeyColumn = 0;
-        let currentWorkbook = null;
-        let currentCell = null;
-        let currentMilestone = null;
-        const months = 24;
+    const CONFIG_KEY = 'gantt_import_config';
+    const MILESTONES_KEY = 'gantt_milestones';
+    let tasks = [];
+    let columns = [];
+    let primaryKeyColumn = 0;
+    let currentWorkbook = null;
+    let currentCell = null;
+    let currentMilestone = null;
+    const months = 24;
 
-        function saveConfiguration() {
-            const config = {
-                primaryKeyColumn,
-                mapping: {
-                    name: document.getElementById('map_name').value,
-                    subName: document.getElementById('map_subName').value,
-                    priority: document.getElementById('map_priority').value,
-                    startDate: document.getElementById('map_startDate').value,
-                    endDate: document.getElementById('map_endDate').value
-                },
-                lastSheet: document.getElementById('sheetSelect').value
-            };
-            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    function findCellForDate(date, rowId) {
+        const monthIndex = (date.getFullYear() - 2024) * 12 + date.getMonth();
+        const cellId = `${rowId}_${monthIndex}`;
+        return document.querySelector(`[data-cell-id="${cellId}"]`);
+    }
+
+    function saveConfiguration() {
+        const config = {
+            primaryKeyColumn,
+            mapping: {
+                name: document.getElementById('map_name').value,
+                subName: document.getElementById('map_subName').value,
+                priority: document.getElementById('map_priority').value,
+                startDate: document.getElementById('map_startDate').value,
+                endDate: document.getElementById('map_endDate').value
+            },
+            lastSheet: document.getElementById('sheetSelect').value
+        };
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    }
+
+    function loadConfiguration() {
+        const savedConfig = localStorage.getItem(CONFIG_KEY);
+        if (savedConfig) {
+            try {
+                return JSON.parse(savedConfig);
+            } catch (e) {
+                console.error('Erreur lors du chargement de la configuration:', e);
+                return null;
+            }
         }
+        return null;
+    }
 
-        function loadConfiguration() {
-            const savedConfig = localStorage.getItem(CONFIG_KEY);
-            if (savedConfig) {
-                try {
-                    return JSON.parse(savedConfig);
-                } catch (e) {
-                    console.error('Erreur lors du chargement de la configuration:', e);
-                    return null;
+    function applyConfiguration(config) {
+        if (!config) return;
+        if (config.primaryKeyColumn !== undefined) {
+            primaryKeyColumn = config.primaryKeyColumn;
+            const primaryKeySelect = document.getElementById('primaryKeySelect');
+            if (primaryKeySelect) {
+                primaryKeySelect.value = config.primaryKeyColumn;
+            }
+        }
+        if (config.mapping) {
+            Object.entries(config.mapping).forEach(([field, value]) => {
+                const select = document.getElementById(`map_${field}`);
+                if (select && value !== undefined) {
+                    select.value = value;
                 }
-            }
-            return null;
+            });
         }
-
-        function applyConfiguration(config) {
-            if (!config) return;
-            if (config.primaryKeyColumn !== undefined) {
-                primaryKeyColumn = config.primaryKeyColumn;
-                const primaryKeySelect = document.getElementById('primaryKeySelect');
-                if (primaryKeySelect) {
-                    primaryKeySelect.value = config.primaryKeyColumn;
-                }
-            }
-            if (config.mapping) {
-                Object.entries(config.mapping).forEach(([field, value]) => {
-                    const select = document.getElementById(`map_${field}`);
-                    if (select && value !== undefined) {
-                        select.value = value;
-                    }
-                });
-            }
-            if (config.lastSheet) {
-                const sheetSelect = document.getElementById('sheetSelect');
-                if (sheetSelect) {
-                    sheetSelect.value = config.lastSheet;
-                }
+        if (config.lastSheet) {
+            const sheetSelect = document.getElementById('sheetSelect');
+            if (sheetSelect) {
+                sheetSelect.value = config.lastSheet;
             }
         }
+    }
 
-        function loadMilestones() {
-            const saved = localStorage.getItem(MILESTONES_KEY);
-            return saved ? JSON.parse(saved) : {};
-        }
+    function loadMilestones() {
+        const saved = localStorage.getItem(MILESTONES_KEY);
+        return saved ? JSON.parse(saved) : {};
+    }
 
-        function saveMilestones(milestones) {
+    function saveMilestones(milestones) {
+        try {
             localStorage.setItem(MILESTONES_KEY, JSON.stringify(milestones));
+        } catch (e) {
+            console.error('Erreur lors de la sauvegarde des jalons:', e);
         }
+    }
 
-        function createMilestoneElement(milestone, cell) {
-            const element = document.createElement('div');
-            element.className = 'milestone';
-            element.style.left = `${milestone.position}%`;
-           
-            const label = document.createElement('div');
-            label.className = 'milestone-label';
-            label.textContent = milestone.name;
-            element.appendChild(label);
+    function dateToPosition(date, cell) {
+        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+        const daysInMonth = monthEnd.getDate();
+        
+        const dayPosition = (date.getDate() - 1) / daysInMonth;
+        return Math.min(Math.max(dayPosition * 100, 0), 100);
+    }
 
-            element.addEventListener('contextmenu', (e) => showMilestoneMenu(e, milestone, cell));
-            return element;
+    function positionToDate(position, cell) {
+        const monthIndex = parseInt(cell.dataset.cellId.split('_')[1]);
+        const monthStart = new Date(2024, monthIndex, 1);
+        const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+        const daysInMonth = monthEnd.getDate();
+        
+        const dayIndex = Math.min(Math.max(Math.round((position / 100) * daysInMonth), 1), daysInMonth);
+        return new Date(2024, monthIndex, dayIndex);
+    }
+
+    function parseDate(dateStr) {
+        if (!dateStr) return null;
+        
+        if (dateStr instanceof Date) {
+            return isNaN(dateStr.getTime()) ? null : dateStr;
         }
-
-        function showMilestoneMenu(e, existingMilestone = null, cell = null) {
-            e.preventDefault();
-            const menu = document.getElementById('milestoneMenu');
-            currentCell = cell;
-            currentMilestone = existingMilestone;
-
-            menu.style.left = `${e.pageX}px`;
-            menu.style.top = `${e.pageY}px`;
-            menu.classList.add('is-active');
-
-            const nameInput = document.getElementById('milestoneName');
-            const dateInput = document.getElementById('milestoneDate');
-            const deleteBtn = document.getElementById('deleteMilestoneBtn');
-
-            if (existingMilestone) {
-                nameInput.value = existingMilestone.name;
-                dateInput.value = existingMilestone.date;
-                deleteBtn.style.display = 'block';
-            } else {
-                nameInput.value = '';
-                dateInput.value = '';
-                deleteBtn.style.display = 'none';
+        
+        let date = null;
+        
+        if (typeof dateStr === 'number') {
+            date = new Date((dateStr - 25569) * 86400 * 1000);
+            if (!isNaN(date.getTime())) return date;
+        }
+        
+        if (typeof dateStr === 'string') {
+            date = new Date(dateStr);
+            if (!isNaN(date.getTime())) return date;
+            
+            const parts = dateStr.split(/[\/\-\.]/);
+            if (parts.length === 3) {
+                date = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                if (!isNaN(date.getTime())) return date;
+                
+                date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                if (!isNaN(date.getTime())) return date;
             }
         }
+        
+        return null;
+    }
 
-        function closeMilestoneMenu() {
-            document.getElementById('milestoneMenu').classList.remove('is-active');
-            currentCell = null;
-            currentMilestone = null;
+    function moveMilestoneToCell(milestone, oldCellId, newCell) {
+        const milestones = loadMilestones();
+        
+        if (milestones[oldCellId]) {
+            milestones[oldCellId] = milestones[oldCellId].filter(m => m.id !== milestone.id);
+            if (milestones[oldCellId].length === 0) {
+                delete milestones[oldCellId];
+            }
+        }
+        
+        const newCellId = newCell.dataset.cellId;
+        if (!milestones[newCellId]) {
+            milestones[newCellId] = [];
+        }
+        
+        const position = dateToPosition(new Date(milestone.date), newCell);
+        milestone.position = position;
+        
+        milestones[newCellId].push(milestone);
+        saveMilestones(milestones);
+    }
+</script>
+<script>
+    function createMilestoneElement(milestone, cell) {
+        const element = document.createElement('div');
+        element.className = 'milestone';
+        element.style.left = `${milestone.position}%`;
+        
+        const label = document.createElement('div');
+        label.className = 'milestone-label';
+        label.textContent = milestone.name;
+        element.appendChild(label);
+
+        element.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showMilestoneMenu(e, milestone, cell);
+        });
+        
+        element.draggable = true;
+        let startX = 0;
+        let startLeft = 0;
+
+        element.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', '');
+            element.classList.add('dragging');
+            startX = e.clientX;
+            startLeft = parseFloat(element.style.left);
+        });
+
+        element.addEventListener('drag', (e) => {
+            if (e.clientX === 0) return;
+            const cellRect = cell.getBoundingClientRect();
+            const deltaX = e.clientX - startX;
+            const newPosition = startLeft + (deltaX / cellRect.width) * 100;
+            
+            if (newPosition >= 0 && newPosition <= 100) {
+                element.style.left = `${newPosition}%`;
+            }
+        });
+
+        element.addEventListener('dragend', (e) => {
+            const cellRect = cell.getBoundingClientRect();
+            const position = ((e.clientX - cellRect.left) / cellRect.width) * 100;
+            if (position >= 0 && position <= 100) {
+                updateMilestonePosition(milestone, position, cell);
+            }
+            element.classList.remove('dragging');
+        });
+
+        element.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startX = e.touches[0].clientX;
+            startLeft = parseFloat(element.style.left);
+            element.classList.add('dragging');
+        });
+
+        element.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const cellRect = cell.getBoundingClientRect();
+            const deltaX = e.touches[0].clientX - startX;
+            const newPosition = startLeft + (deltaX / cellRect.width) * 100;
+            
+            if (newPosition >= 0 && newPosition <= 100) {
+                element.style.left = `${newPosition}%`;
+            }
+        });
+
+        element.addEventListener('touchend', (e) => {
+            const position = parseFloat(element.style.left);
+            if (position >= 0 && position <= 100) {
+                updateMilestonePosition(milestone, position, cell);
+            }
+            element.classList.remove('dragging');
+        });
+
+        return element;
+    }
+
+    function showMilestoneMenu(e, existingMilestone = null, cell = null) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const menu = document.getElementById('milestoneMenu');
+        const nameInput = document.getElementById('milestoneName');
+        const dateInput = document.getElementById('milestoneDate');
+        const deleteBtn = document.getElementById('deleteMilestoneBtn');
+
+        currentCell = cell;
+        currentMilestone = existingMilestone;
+
+        menu.style.left = `${e.pageX}px`;
+        menu.style.top = `${e.pageY}px`;
+
+        if (existingMilestone) {
+            nameInput.value = existingMilestone.name;
+            dateInput.value = existingMilestone.date;
+            deleteBtn.style.display = 'block';
+        } else {
+            nameInput.value = '';
+            dateInput.value = '';
+            deleteBtn.style.display = 'none';
         }
 
-        function saveMilestone() {
-            if (!currentCell) return;
+        menu.classList.add('is-active');
+    }
 
-            const name = document.getElementById('milestoneName').value;
-            const date = document.getElementById('milestoneDate').value;
-            if (!name || !date) return;
+    function saveMilestone() {
+        if (!currentCell) return;
 
-            const milestones = loadMilestones();
-            const cellId = currentCell.dataset.cellId;
-           
+        const name = document.getElementById('milestoneName').value;
+        const date = document.getElementById('milestoneDate').value;
+        if (!name || !date) return;
+
+        const newDate = new Date(date);
+        const rowId = currentCell.dataset.cellId.split('_')[0];
+        const targetCell = findCellForDate(newDate, rowId);
+
+        if (!targetCell) {
+            console.error('Impossible de trouver la cellule cible pour la date:', date);
+            return;
+        }
+
+        const milestones = loadMilestones();
+        const position = dateToPosition(newDate, targetCell);
+        
+        const milestone = {
+            id: currentMilestone?.id || Date.now(),
+            name,
+            date,
+            position
+        };
+
+        if (currentMilestone) {
+            const oldCellId = currentCell.dataset.cellId;
+            const newCellId = targetCell.dataset.cellId;
+            
+            if (oldCellId !== newCellId) {
+                moveMilestoneToCell(milestone, oldCellId, targetCell);
+            } else {
+                if (!milestones[newCellId]) {
+                    milestones[newCellId] = [];
+                }
+                const index = milestones[newCellId].findIndex(m => m.id === currentMilestone.id);
+                if (index !== -1) {
+                    milestones[newCellId][index] = milestone;
+                } else {
+                    milestones[newCellId].push(milestone);
+                }
+                saveMilestones(milestones);
+            }
+        } else {
+            const cellId = targetCell.dataset.cellId;
             if (!milestones[cellId]) {
                 milestones[cellId] = [];
             }
+            milestones[cellId].push(milestone);
+            saveMilestones(milestones);
+        }
 
-            const milestone = {
-                id: currentMilestone?.id || Date.now(),
-                name,
-                date,
-                position: currentMilestone?.position || 50
-            };
+        renderMilestones();
+        closeMilestoneMenu();
+    }
 
-            if (currentMilestone) {
-                const index = milestones[cellId].findIndex(m => m.id === currentMilestone.id);
-                if (index !== -1) {
-                    milestones[cellId][index] = milestone;
-                }
-            } else {
-                milestones[cellId].push(milestone);
+    function updateMilestonePosition(milestone, position, cell) {
+        const date = positionToDate(position, cell);
+        const rowId = cell.dataset.cellId.split('_')[0];
+        const targetCell = findCellForDate(date, rowId);
+
+        if (!targetCell) {
+            console.error('Impossible de trouver la cellule cible pour la position:', position);
+            return;
+        }
+
+        const milestones = loadMilestones();
+        const oldCellId = cell.dataset.cellId;
+        const newCellId = targetCell.dataset.cellId;
+
+        milestone.date = date.toISOString().split('T')[0];
+        milestone.position = position;
+
+        if (oldCellId !== newCellId) {
+            moveMilestoneToCell(milestone, oldCellId, targetCell);
+        } else {
+            if (!milestones[newCellId]) {
+                milestones[newCellId] = [];
             }
+            const index = milestones[newCellId].findIndex(m => m.id === milestone.id);
+            if (index !== -1) {
+                milestones[newCellId][index] = milestone;
+            } else {
+                milestones[newCellId].push(milestone);
+            }
+            saveMilestones(milestones);
+        }
 
+        renderMilestones();
+    }
+
+    function deleteMilestone() {
+        if (!currentCell || !currentMilestone) return;
+
+        const milestones = loadMilestones();
+        const cellId = currentCell.dataset.cellId;
+        
+        if (milestones[cellId]) {
+            milestones[cellId] = milestones[cellId].filter(m => m.id !== currentMilestone.id);
+            if (milestones[cellId].length === 0) {
+                delete milestones[cellId];
+            }
             saveMilestones(milestones);
             renderMilestones();
-            closeMilestoneMenu();
         }
+        
+        closeMilestoneMenu();
+    }
 
-        function deleteMilestone() {
-            if (!currentCell || !currentMilestone) return;
+    function closeMilestoneMenu() {
+        const menu = document.getElementById('milestoneMenu');
+        menu.classList.remove('is-active');
+        currentCell = null;
+        currentMilestone = null;
+    }
 
-            const milestones = loadMilestones();
-            const cellId = currentCell.dataset.cellId;
-           
-            if (milestones[cellId]) {
-                milestones[cellId] = milestones[cellId].filter(m => m.id !== currentMilestone.id);
-                saveMilestones(milestones);
-                renderMilestones();
-            }
-           
-            closeMilestoneMenu();
-        }
-
-        function renderMilestones() {
-            const milestones = loadMilestones();
-           
-            document.querySelectorAll('.milestone').forEach(m => m.remove());
-           
-            Object.entries(milestones).forEach(([cellId, cellMilestones]) => {
-                const cell = document.querySelector(`[data-cell-id="${cellId}"]`);
-                if (cell) {
-                    cellMilestones.forEach(milestone => {
-                        cell.appendChild(createMilestoneElement(milestone, cell));
-                    });
-                }
-            });
-        }
-
-        function toggleSettings() {
-            document.getElementById('settingsMenu').classList.toggle('is-active');
-        }
-
-        function closeImportModal() {
-            document.getElementById('importModal').classList.remove('is-active');
-        }
-
-        function updatePrimaryKey(columnIndex) {
-            primaryKeyColumn = parseInt(columnIndex);
-            createTable();
-        }
-
-        function toggleGroup(groupId) {
-            const row = document.querySelector(`[data-group-id="${groupId}"]`);
-            const wasCollapsed = row.classList.toggle('is-collapsed');
-            const level = parseInt(row.dataset.level || '0');
-           
-            let next = row.nextElementSibling;
-            while (next) {
-                const nextLevel = parseInt(next.dataset.level || '0');
-                if (nextLevel <= level) break;
-               
-                if (wasCollapsed) {
-                    next.classList.add('is-hidden-by-parent');
-                    if (next.classList.contains('group-row') && !next.classList.contains('is-collapsed')) {
-                        next.dataset.wasExpanded = 'true';
+    function renderMilestones() {
+        document.querySelectorAll('.milestone').forEach(m => m.remove());
+        
+        const milestones = loadMilestones();
+        Object.entries(milestones).forEach(([cellId, cellMilestones]) => {
+            const cell = document.querySelector(`[data-cell-id="${cellId}"]`);
+            if (cell) {
+                cellMilestones.forEach(milestone => {
+                    if (typeof milestone.position !== 'number') {
+                        milestone.position = dateToPosition(new Date(milestone.date), cell);
                     }
-                    next.classList.add('is-collapsed');
-                } else {
-                    next.classList.remove('is-hidden-by-parent');
-                    if (next.classList.contains('group-row') && next.dataset.wasExpanded === 'true') {
-                        next.classList.remove('is-collapsed');
-                        next.removeAttribute('data-was-expanded');
-                    }
-                }
-                next = next.nextElementSibling;
-            }
-        }
-
-        function getDuration(task) {
-            return task.end.getTime() - task.start.getTime();
-        }
-
-        function getPrimaryKeyFromTask(task) {
-            const columnName = columns[primaryKeyColumn];
-            return String(task.rawData[columnName] || '');
-        }
-
-        function removeDuplicates(tasks) {
-            const uniqueTasks = new Map();
-            tasks.forEach(task => {
-                const key = getPrimaryKeyFromTask(task);
-                const existingTask = uniqueTasks.get(key);
-                if (!existingTask || getDuration(task) > getDuration(existingTask)) {
-                    uniqueTasks.set(key, task);
-                }
-            });
-            return Array.from(uniqueTasks.values());
-        }
-
-        function groupTasks(tasks) {
-            const groups = {};
-            tasks.forEach(task => {
-                const code = getPrimaryKeyFromTask(task);
-                if (!groups[code]) {
-                    groups[code] = {
-                        isGroup: true,
-                        name: code,
-                        priority: task.priority,
-                        start: new Date(task.start),
-                        end: new Date(task.end),
-                        tasks: []
-                    };
-                }
-                groups[code].tasks.push(task);
-                groups[code].start = new Date(Math.min(groups[code].start, task.start));
-                groups[code].end = new Date(Math.max(groups[code].end, task.end));
-            });
-            return Object.values(groups);
-        }
-
-        function createTable() {
-            const table = document.getElementById('ganttTable');
-            table.innerHTML = '';
-           
-            const thead = document.createElement('tr');
-            thead.innerHTML = `
-                <th class="task-cell has-background-white">Action</th>
-                ${Array.from({length: months}, (_, i) => {
-                    const date = new Date(2024, i, 1);
-                    return `<th class="has-text-centered">${date.toLocaleDateString('fr', {month: 'short', year: '2-digit'})}</th>`;
-                }).join('')}
-            `;
-            table.appendChild(thead);
-
-            let rowId = 0;
-            function createRows(items, level = 0) {
-                items.forEach(item => {
-                    const row = document.createElement('tr');
-                    row.className = 'task-row';
-                    row.dataset.level = level;
-                    const currentRowId = rowId++;
-                    row.dataset.groupId = currentRowId;
-
-                    const hasSubItems = item.tasks && item.tasks.length > 0;
-                    if (hasSubItems) {
-                        row.classList.add('group-row');
-                    }
-
-                    const cell = document.createElement('td');
-                    cell.className = `task-cell task-level-${level}`;
-
-                    let cellContent = '';
-                    if (hasSubItems) {
-                        cellContent += `
-                            <span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
-                                <i class="fas fa-chevron-down"></i>
-                            </span>
-                        `;
-                    } else {
-                        cellContent += `<span class="group-icon"></span>`;
-                    }
-                    cellContent += `<span class="group-name">${item.name}</span>`;
-                    cell.innerHTML = cellContent;
-                    row.appendChild(cell);
-
-                    const startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
-                    const endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
-                   
-                    for (let i = 0; i < months; i++) {
-                        const timelineCell = document.createElement('td');
-                        timelineCell.className = 'timeline-cell';
-                        timelineCell.dataset.cellId = `${currentRowId}_${i}`;
-                       
-                        if (i >= startMonth && i <= endMonth) {
-                            const bar = document.createElement('div');
-                            bar.className = `task-bar priority-${item.priority}`;
-                            bar.style.width = '100%';
-                            bar.style.opacity = level === 0 ? '0.3' : '0.8';
-                            timelineCell.appendChild(bar);
-                            timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
-                        }
-                       
-                        row.appendChild(timelineCell);
-                    }
-                   
-                    table.appendChild(row);
-
-                    if (item.tasks) {
-                        const subItems = item.tasks.map(task => ({
-                            name: task.subName,
-                            priority: task.priority,
-                            start: task.start,
-                            end: task.end,
-                            tasks: []
-                        })).filter(task => task.name);
-                       
-                        if (subItems.length > 0) {
-                            createRows(subItems, level + 1);
-                        }
-                    }
+                    cell.appendChild(createMilestoneElement(milestone, cell));
                 });
             }
+        });
+    }
+</script>
+<script>
+    function toggleSettings() {
+        document.getElementById('settingsMenu').classList.toggle('is-active');
+    }
 
-            const groupedTasks = groupTasks(tasks);
-            createRows(groupedTasks);
-            renderMilestones();
-        }
+    function closeImportModal() {
+        document.getElementById('importModal').classList.remove('is-active');
+    }
 
-        function showImportSettings() {
-            if (currentWorkbook) {
-                document.getElementById('importModal').classList.add('is-active');
-                document.getElementById('settingsMenu').classList.remove('is-active');
-            }
-        }
+    function updatePrimaryKey(columnIndex) {
+        primaryKeyColumn = parseInt(columnIndex);
+        createTable();
+    }
 
-        function updateColumns() {
-            if (!currentWorkbook) return;
-           
-            const sheetSelect = document.getElementById('sheetSelect');
-            const sheet = currentWorkbook.Sheets[sheetSelect.value];
-            columns = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0];
-           
-            const savedConfig = loadConfiguration();
-           
-            const selects = ['name', 'subName', 'priority', 'startDate', 'endDate'];
-            selects.forEach(field => {
-                const select = document.getElementById(`map_${field}`);
-                select.innerHTML = `<option value="">Sélectionner...</option>` +
-                    columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
-                   
-                if (savedConfig?.mapping?.[field] !== undefined) {
-                    if (select.querySelector(`option[value="${savedConfig.mapping[field]}"]`)) {
-                        select.value = savedConfig.mapping[field];
-                    }
+    function toggleGroup(groupId) {
+        const row = document.querySelector(`[data-group-id="${groupId}"]`);
+        const wasCollapsed = row.classList.toggle('is-collapsed');
+        const level = parseInt(row.dataset.level || '0');
+        
+        let next = row.nextElementSibling;
+        while (next) {
+            const nextLevel = parseInt(next.dataset.level || '0');
+            if (nextLevel <= level) break;
+            
+            if (wasCollapsed) {
+                next.classList.add('is-hidden-by-parent');
+                if (next.classList.contains('group-row') && !next.classList.contains('is-collapsed')) {
+                    next.dataset.wasExpanded = 'true';
                 }
-            });
-           
-            const primaryKeySelect = document.getElementById('primaryKeySelect');
-            primaryKeySelect.innerHTML = columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
-            if (savedConfig?.primaryKeyColumn !== undefined) {
-                if (primaryKeySelect.querySelector(`option[value="${savedConfig.primaryKeyColumn}"]`)) {
-                    primaryKeySelect.value = savedConfig.primaryKeyColumn;
-                    primaryKeyColumn = savedConfig.primaryKeyColumn;
+                next.classList.add('is-collapsed');
+            } else {
+                next.classList.remove('is-hidden-by-parent');
+                if (next.classList.contains('group-row') && next.dataset.wasExpanded === 'true') {
+                    next.classList.remove('is-collapsed');
+                    next.removeAttribute('data-was-expanded');
                 }
             }
+            next = next.nextElementSibling;
         }
-
-        function importData() {
-            if (!currentWorkbook) return;
-           
-            saveConfiguration();
-           
-            const mapping = {};
-            ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
-                mapping[field] = document.getElementById(`map_${field}`).value;
-            });
-           
-            const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
-            const rawData = XLSX.utils.sheet_to_json(sheet);
-            tasks = rawData
-                .filter(row => row[Object.keys(row)[mapping.name]])
-                .map(row => ({
-                    name: row[Object.keys(row)[mapping.name]],
-                    subName: mapping.subName ? row[Object.keys(row)[mapping.subName]] : null,
-                    priority: parseInt(row[Object.keys(row)[mapping.priority]]) || 3,
-                    start: new Date(row[Object.keys(row)[mapping.startDate]]),
-                    end: new Date(row[Object.keys(row)[mapping.endDate]]),
-                    rawData: row
-                }))
-                .filter(task => task.name && !isNaN(task.start) && !isNaN(task.end));
-           
-            createTable();
-            document.getElementById('importModal').classList.remove('is-active');
-        }
-
-        document.getElementById('fileInput').onchange = (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                document.getElementById('fileName').textContent = file.name;
-               
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const data = new Uint8Array(e.target.result);
-                    currentWorkbook = XLSX.read(data, {type: 'array'});
-                   
-                    const sheetSelect = document.getElementById('sheetSelect');
-                    sheetSelect.innerHTML = currentWorkbook.SheetNames.map(name =>
-                        `<option value="${name}">${name}</option>`
-                    ).join('');
-
-                    const savedConfig = loadConfiguration();
-                    if (savedConfig?.lastSheet && sheetSelect.querySelector(`option[value="${savedConfig.lastSheet}"]`)) {
-                        sheetSelect.value = savedConfig.lastSheet;
-                    }
-
-                    sheetSelect.onchange = updateColumns;
-                    updateColumns();
-                    document.getElementById('importModal').classList.add('is-active');
-                };
-                reader.readAsArrayBuffer(file);
-            }
-        };
-
-        document.addEventListener('click', (e) => {
-            const menu = document.getElementById('milestoneMenu');
-            if (!menu.contains(e.target)) {
-                closeMilestoneMenu();
-            }
-        });
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedConfig = loadConfiguration();
-            if (savedConfig) {
-                primaryKeyColumn = savedConfig.primaryKeyColumn;
-            }
-            createTable();
-        });
-       
-function validateTask(row, mapping) {
-    const errors = [];
-   
-    // Vérification du nom
-    if (!row[Object.keys(row)[mapping.name]]) {
-        errors.push("Nom manquant");
     }
 
-    // Vérification de la date de début
-    const startDate = new Date(row[Object.keys(row)[mapping.startDate]]);
-    if (isNaN(startDate.getTime())) {
-        errors.push("Date de début invalide");
-    }
-
-    // Vérification de la date de fin
-    const endDate = new Date(row[Object.keys(row)[mapping.endDate]]);
-    if (isNaN(endDate.getTime())) {
-        errors.push("Date de fin invalide");
-    }
-
-    // Vérifie si les dates sont dans le bon ordre
-    if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && startDate > endDate) {
-        errors.push("La date de fin est antérieure à la date de début");
-    }
-
-    return errors;
-}
-
-function importData() {
-    if (!currentWorkbook) return;
-   
-    saveConfiguration();
-   
-    const mapping = {};
-    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
-        mapping[field] = document.getElementById(`map_${field}`).value;
-    });
-   
-    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
-    const rawData = XLSX.utils.sheet_to_json(sheet);
-   
-    tasks = rawData.map(row => {
-        const errors = validateTask(row, mapping);
-        const startDate = new Date(row[Object.keys(row)[mapping.startDate]]);
-        const endDate = new Date(row[Object.keys(row)[mapping.endDate]]);
-       
-        return {
-            name: row[Object.keys(row)[mapping.name]] || '(Sans nom)',
-            subName: mapping.subName ? row[Object.keys(row)[mapping.subName]] : null,
-            priority: parseInt(row[Object.keys(row)[mapping.priority]]) || 3,
-            start: isNaN(startDate.getTime()) ? new Date() : startDate,
-            end: isNaN(endDate.getTime()) ? new Date() : endDate,
-            rawData: row,
-            errors: errors,
-            hasError: errors.length > 0
-        };
-    });
-   
-    createTable();
-    document.getElementById('importModal').classList.remove('is-active');
-}
-
-function createRows(items, level = 0) {
-    items.forEach(item => {
-        const row = document.createElement('tr');
-        row.className = 'task-row';
-        if (item.hasError) {
-            row.classList.add('has-error');
-        }
-        row.dataset.level = level;
-        const currentRowId = rowId++;
-        row.dataset.groupId = currentRowId;
-
-        const hasSubItems = item.tasks && item.tasks.length > 0;
-        if (hasSubItems) {
-            row.classList.add('group-row');
-        }
-
-        const cell = document.createElement('td');
-        cell.className = `task-cell task-level-${level}`;
-
-        let cellContent = '';
-        if (hasSubItems) {
-            cellContent += `
-                <span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
-                    <i class="fas fa-chevron-down"></i>
-                </span>
-            `;
-        } else {
-            cellContent += `<span class="group-icon"></span>`;
-        }
-       
-        cellContent += `<span class="group-name">${item.name}</span>`;
-       
-        if (item.hasError) {
-            cellContent += `
-                <span class="error-tooltip">
-                    <i class="fas fa-exclamation-circle error-icon"></i>
-                    <span class="error-message">
-                        Erreurs détectées:
-                        <ul class="error-list">
-                            ${item.errors.map(error => `<li>${error}</li>`).join('')}
-                        </ul>
-                    </span>
-                </span>
-            `;
-        }
-       
-        cell.innerHTML = cellContent;
-        row.appendChild(cell);
-
-        const startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
-        const endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
-       
-        for (let i = 0; i < months; i++) {
-            const timelineCell = document.createElement('td');
-            timelineCell.className = 'timeline-cell';
-            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
-           
-            if (i >= startMonth && i <= endMonth) {
-                const bar = document.createElement('div');
-                bar.className = `task-bar priority-${item.priority}`;
-                bar.style.width = '100%';
-                bar.style.opacity = level === 0 ? '0.3' : '0.8';
-                timelineCell.appendChild(bar);
-                timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
-            }
-           
-            row.appendChild(timelineCell);
-        }
-       
-        table.appendChild(row);
-
-        if (item.tasks) {
-            const subItems = item.tasks.map(task => ({
-                name: task.subName,
-                priority: task.priority,
-                start: task.start,
-                end: task.end,
-                tasks: [],
-                errors: task.errors,
-                hasError: task.hasError
-            })).filter(task => task.name);
-           
-            if (subItems.length > 0) {
-                createRows(subItems, level + 1);
-            }
-        }
-    });
-}
-
-function importData() {
-    if (!currentWorkbook) return;
-    
-    saveConfiguration();
-    
-    const mapping = {};
-    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
-        mapping[field] = document.getElementById(`map_${field}`).value;
-    });
-    
-    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
-    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
-    
-    tasks = rawData.map(row => {
-        const errors = validateTask(row, mapping);
-        const startDate = new Date(row[columns[mapping.startDate]]);
-        const endDate = new Date(row[columns[mapping.endDate]]);
+    function validateTask(row, mapping) {
+        const errors = [];
+        const warnings = [];
         
-        return {
-            name: row[columns[mapping.name]] || '(Sans nom)',
-            subName: mapping.subName ? row[columns[mapping.subName]] : null,
-            priority: parseInt(row[columns[mapping.priority]]) || 3,
-            start: isNaN(startDate.getTime()) ? new Date() : startDate,
-            end: isNaN(endDate.getTime()) ? new Date() : endDate,
-            rawData: row,
-            errors: errors,
-            hasError: errors.length > 0
-        };
-    });
-    
-    createTable();
-    document.getElementById('importModal').classList.remove('is-active');
-}
-
-function validateTask(row, mapping) {
-    const errors = [];
-    
-    // Vérification du nom
-    if (!row[columns[mapping.name]]) {
-        errors.push("Nom manquant");
-    }
-
-    // Vérification de la date de début
-    const startDate = new Date(row[columns[mapping.startDate]]);
-    if (isNaN(startDate.getTime())) {
-        errors.push("Date de début invalide");
-    }
-
-    // Vérification de la date de fin
-    const endDate = new Date(row[columns[mapping.endDate]]);
-    if (isNaN(endDate.getTime())) {
-        errors.push("Date de fin invalide");
-    }
-
-    // Vérifie si les dates sont dans le bon ordre
-    if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && startDate > endDate) {
-        errors.push("La date de fin est antérieure à la date de début");
-    }
-
-    return errors;
-}
-
-function updateColumns() {
-    if (!currentWorkbook) return;
-    
-    const sheetSelect = document.getElementById('sheetSelect');
-    const sheet = currentWorkbook.Sheets[sheetSelect.value];
-    
-    // Récupérer toutes les colonnes, y compris celles masquées
-    const ref = XLSX.utils.decode_range(sheet['!ref']);
-    columns = [];
-    for(let C = ref.s.c; C <= ref.e.c; C++) {
-        const header = sheet[XLSX.utils.encode_cell({r:0, c:C})];
-        columns.push(header ? header.v : `Colonne ${C + 1}`);
-    }
-    
-    const savedConfig = loadConfiguration();
-    
-    const selects = ['name', 'subName', 'priority', 'startDate', 'endDate'];
-    selects.forEach(field => {
-        const select = document.getElementById(`map_${field}`);
-        select.innerHTML = `<option value="">Sélectionner...</option>` +
-            columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
-            
-        if (savedConfig?.mapping?.[field] !== undefined) {
-            if (select.querySelector(`option[value="${savedConfig.mapping[field]}"]`)) {
-                select.value = savedConfig.mapping[field];
-            }
-        }
-    });
-    
-    const primaryKeySelect = document.getElementById('primaryKeySelect');
-    primaryKeySelect.innerHTML = columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
-    if (savedConfig?.primaryKeyColumn !== undefined) {
-        if (primaryKeySelect.querySelector(`option[value="${savedConfig.primaryKeyColumn}"]`)) {
-            primaryKeySelect.value = savedConfig.primaryKeyColumn;
-            primaryKeyColumn = savedConfig.primaryKeyColumn;
-        }
-    }
-}
-
-function validateTask(row, mapping) {
-    const errors = [];
-    const warnings = [];
-    
-    if (!row[columns[mapping.name]]) {
-        errors.push("Nom manquant");
-    }
-
-    const startDate = row[columns[mapping.startDate]] ? new Date(row[columns[mapping.startDate]]) : null;
-    const endDate = row[columns[mapping.endDate]] ? new Date(row[columns[mapping.endDate]]) : null;
-
-    if (!startDate && !endDate) {
-        warnings.push("Dates manquantes");
-    } else {
-        if (!startDate) warnings.push("Date de début manquante");
-        if (!endDate) warnings.push("Date de fin manquante");
-        
-        if (startDate && endDate && startDate > endDate) {
-            errors.push("La date de fin est antérieure à la date de début");
-        }
-        
-        if (startDate && isNaN(startDate.getTime())) {
-            errors.push("Date de début invalide");
-        }
-        if (endDate && isNaN(endDate.getTime())) {
-            errors.push("Date de fin invalide");
-        }
-    }
-
-    return { errors, warnings };
-}
-
-function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
-    if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority} date-missing`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        
-        const tooltip = document.createElement('div');
-        tooltip.className = 'error-tooltip';
-        tooltip.appendChild(bar);
-        
-        const message = document.createElement('span');
-        message.className = 'error-message';
-        message.textContent = 'Dates manquantes ou invalides';
-        tooltip.appendChild(message);
-        
-        timelineCell.appendChild(tooltip);
-        return;
-    }
-
-    if (item.hasError) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar is-invalid`;
-        bar.style.width = '100%';
-        timelineCell.appendChild(bar);
-        return;
-    }
-
-    if (i >= startMonth && i <= endMonth) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority}`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        timelineCell.appendChild(bar);
-        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
-    }
-}
-
-function importData() {
-    if (!currentWorkbook) return;
-    
-    saveConfiguration();
-    
-    const mapping = {};
-    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
-        mapping[field] = document.getElementById(`map_${field}`).value;
-    });
-    
-    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
-    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
-    
-    tasks = rawData.map(row => {
-        const { errors, warnings } = validateTask(row, mapping);
-        const startDate = row[columns[mapping.startDate]] ? new Date(row[columns[mapping.startDate]]) : null;
-        const endDate = row[columns[mapping.endDate]] ? new Date(row[columns[mapping.endDate]]) : null;
-        
-        return {
-            name: row[columns[mapping.name]] || '(Sans nom)',
-            subName: mapping.subName ? row[columns[mapping.subName]] : null,
-            priority: parseInt(row[columns[mapping.priority]]) || 3,
-            start: startDate,
-            end: endDate,
-            rawData: row,
-            errors,
-            warnings,
-            hasError: errors.length > 0,
-            hasWarning: warnings.length > 0
-        };
-    });
-    
-    createTable();
-    document.getElementById('importModal').classList.remove('is-active');
-}
-
-function createRows(items, level = 0) {
-    items.forEach(item => {
-        const row = document.createElement('tr');
-        row.className = 'task-row';
-        if (item.hasError) {
-            row.classList.add('has-error');
-        }
-        row.dataset.level = level;
-        const currentRowId = rowId++;
-        row.dataset.groupId = currentRowId;
-
-        const hasSubItems = item.tasks && item.tasks.length > 0;
-        if (hasSubItems) {
-            row.classList.add('group-row');
+        if (!row[columns[mapping.name]]) {
+            errors.push("Nom manquant");
         }
 
-        const cell = document.createElement('td');
-        cell.className = `task-cell task-level-${level}`;
-
-        let cellContent = `
-            ${hasSubItems ? 
-                `<span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
-                    <i class="fas fa-chevron-down"></i>
-                </span>` : 
-                `<span class="group-icon"></span>`
-            }
-            <span class="group-name">${item.name}</span>
-        `;
-
-        if (item.hasError || item.hasWarning) {
-            cellContent += `
-                <span class="error-tooltip">
-                    ${item.hasError ? 
-                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
-                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
-                    }
-                    <span class="error-message">
-                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
-                        <ul class="error-list">
-                            ${item.errors.concat(item.warnings).map(msg => `<li>${msg}</li>`).join('')}
-                        </ul>
-                    </span>
-                </span>
-            `;
-        }
-
-        cell.innerHTML = cellContent;
-        row.appendChild(cell);
-
-        const startMonth = item.start ? (item.start.getFullYear() - 2024) * 12 + item.start.getMonth() : 0;
-        const endMonth = item.end ? (item.end.getFullYear() - 2024) * 12 + item.end.getMonth() : months - 1;
-        
-        for (let i = 0; i < months; i++) {
-            const timelineCell = document.createElement('td');
-            timelineCell.className = 'timeline-cell';
-            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
-            
-            createTimelineBar(timelineCell, item, startMonth, endMonth, level, i);
-            
-            row.appendChild(timelineCell);
-        }
-        
-        table.appendChild(row);
-
-        if (item.tasks) {
-            const subItems = item.tasks.map(task => ({
-                ...task,
-                tasks: []
-            })).filter(task => task.name);
-            
-            if (subItems.length > 0) {
-                createRows(subItems, level + 1);
-            }
-        }
-    });
-}
-
-function createRows(items, level = 0) {
-    items.forEach(item => {
-        const row = document.createElement('tr');
-        row.className = 'task-row';
-        if (item.hasError) {
-            row.classList.add('has-error');
-        }
-        row.dataset.level = level;
-        const currentRowId = rowId++;
-        row.dataset.groupId = currentRowId;
-
-        const hasSubItems = item.tasks && item.tasks.length > 0;
-        if (hasSubItems) {
-            row.classList.add('group-row');
-        }
-
-        const cell = document.createElement('td');
-        cell.className = `task-cell task-level-${level}`;
-
-        let cellContent = `
-            ${hasSubItems ? 
-                `<span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
-                    <i class="fas fa-chevron-down"></i>
-                </span>` : 
-                `<span class="group-icon"></span>`
-            }
-            <span class="group-name">${item.name}</span>
-        `;
-
-        if (item.hasError || item.hasWarning) {
-            cellContent += `
-                <span class="error-tooltip">
-                    ${item.hasError ? 
-                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
-                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
-                    }
-                    <span class="error-message">
-                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
-                        <ul class="error-list">
-                            ${[...(item.errors || []), ...(item.warnings || [])].map(msg => `<li>${msg}</li>`).join('')}
-                        </ul>
-                    </span>
-                </span>
-            `;
-        }
-
-        cell.innerHTML = cellContent;
-        row.appendChild(cell);
-
-        // Calcul sécurisé des mois de début et de fin
-        let startMonth = 0;
-        let endMonth = months - 1;
-
-        if (item.start && item.start instanceof Date && !isNaN(item.start.getTime())) {
-            startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
-        }
-        
-        if (item.end && item.end instanceof Date && !isNaN(item.end.getTime())) {
-            endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
-        }
-
-        // Vérification que les mois sont dans les limites
-        startMonth = Math.max(0, Math.min(startMonth, months - 1));
-        endMonth = Math.max(0, Math.min(endMonth, months - 1));
-        
-        for (let i = 0; i < months; i++) {
-            const timelineCell = document.createElement('td');
-            timelineCell.className = 'timeline-cell';
-            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
-            
-            createTimelineBar(timelineCell, item, startMonth, endMonth, level, i);
-            
-            row.appendChild(timelineCell);
-        }
-        
-        table.appendChild(row);
-
-        if (item.tasks) {
-            const subItems = item.tasks
-                .filter(task => task && task.name)  // S'assurer que la tâche existe et a un nom
-                .map(task => ({
-                    ...task,
-                    tasks: []
-                }));
-            
-            if (subItems.length > 0) {
-                createRows(subItems, level + 1);
-            }
-        }
-    });
-}
-
-function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
-    const hasValidDates = item.start && 
-                         item.end && 
-                         item.start instanceof Date && 
-                         item.end instanceof Date && 
-                         !isNaN(item.start.getTime()) && 
-                         !isNaN(item.end.getTime());
-
-    if (!hasValidDates) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority} date-missing`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        timelineCell.appendChild(bar);
-        return;
-    }
-
-    if (item.hasError) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar is-invalid`;
-        bar.style.width = '100%';
-        timelineCell.appendChild(bar);
-        return;
-    }
-
-    if (i >= startMonth && i <= endMonth) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority}`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        timelineCell.appendChild(bar);
-        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
-    }
-}
-
-// Fonction utilitaire pour parser une date de manière sécurisée
-function parseDate(dateStr) {
-    if (!dateStr) return null;
-    
-    // Si c'est déjà un objet Date
-    if (dateStr instanceof Date) {
-        return isNaN(dateStr.getTime()) ? null : dateStr;
-    }
-    
-    // Essayer plusieurs formats de date
-    let date = null;
-    
-    // Format Excel (nombre de jours depuis 1900)
-    if (typeof dateStr === 'number') {
-        date = new Date((dateStr - 25569) * 86400 * 1000);
-        if (!isNaN(date.getTime())) return date;
-    }
-    
-    // Format string
-    if (typeof dateStr === 'string') {
-        // Essayer le parsing direct
-        date = new Date(dateStr);
-        if (!isNaN(date.getTime())) return date;
-        
-        // Format DD/MM/YYYY
-        const parts = dateStr.split(/[\/\-\.]/);
-        if (parts.length === 3) {
-            // Essayer les deux formats possibles (DD/MM/YYYY et YYYY/MM/DD)
-            date = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-            if (!isNaN(date.getTime())) return date;
-            
-            date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-            if (!isNaN(date.getTime())) return date;
-        }
-    }
-    
-    return null;
-}
-
-// Fonction de validation modifiée
-function validateTask(row, mapping) {
-    const errors = [];
-    const warnings = [];
-    
-    if (!row[columns[mapping.name]]) {
-        errors.push("Nom manquant");
-    }
-
-    const startDate = parseDate(row[columns[mapping.startDate]]);
-    const endDate = parseDate(row[columns[mapping.endDate]]);
-
-    if (!startDate && !endDate) {
-        warnings.push("Dates manquantes");
-    } else {
-        if (!startDate) warnings.push("Date de début manquante");
-        if (!endDate) warnings.push("Date de fin manquante");
-        
-        if (startDate && endDate && startDate > endDate) {
-            errors.push("La date de fin est antérieure à la date de début");
-        }
-    }
-
-    return { errors, warnings };
-}
-
-// Fonction d'import modifiée
-function importData() {
-    if (!currentWorkbook) return;
-    
-    saveConfiguration();
-    
-    const mapping = {};
-    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
-        mapping[field] = document.getElementById(`map_${field}`).value;
-    });
-    
-    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
-    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
-    
-    tasks = rawData.map(row => {
-        const { errors, warnings } = validateTask(row, mapping);
         const startDate = parseDate(row[columns[mapping.startDate]]);
         const endDate = parseDate(row[columns[mapping.endDate]]);
+
+        if (!startDate && !endDate) {
+            warnings.push("Dates manquantes");
+        } else {
+            if (!startDate) warnings.push("Date de début manquante");
+            if (!endDate) warnings.push("Date de fin manquante");
+            
+            if (startDate && endDate && startDate > endDate) {
+                errors.push("La date de fin est antérieure à la date de début");
+            }
+        }
+
+        return { errors, warnings };
+    }
+
+    function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
+        const hasValidDates = item.start && 
+                            item.end && 
+                            item.start instanceof Date && 
+                            item.end instanceof Date && 
+                            !isNaN(item.start.getTime()) && 
+                            !isNaN(item.end.getTime());
+
+        if (!hasValidDates) {
+            const bar = document.createElement('div');
+            bar.className = `task-bar priority-${item.priority} date-missing`;
+            bar.style.width = '100%';
+            bar.style.opacity = level === 0 ? '0.3' : '0.8';
+            timelineCell.appendChild(bar);
+            return;
+        }
+
+        if (item.hasError) {
+            const bar = document.createElement('div');
+            bar.className = `task-bar is-invalid`;
+            bar.style.width = '100%';
+            timelineCell.appendChild(bar);
+            return;
+        }
+
+        if (i >= startMonth && i <= endMonth) {
+            const bar = document.createElement('div');
+            bar.className = `task-bar priority-${item.priority}`;
+            bar.style.width = '100%';
+            bar.style.opacity = level === 0 ? '0.3' : '0.8';
+            timelineCell.appendChild(bar);
+            timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+        }
+    }
+
+    function createTable() {
+        const table = document.getElementById('ganttTable');
+        table.innerHTML = '';
         
-        return {
-            name: row[columns[mapping.name]] || '(Sans nom)',
-            subName: mapping.subName ? row[columns[mapping.subName]] : null,
-            priority: parseInt(row[columns[mapping.priority]]) || 3,
-            start: startDate || new Date(2024, 0, 1), // Date par défaut si manquante
-            end: endDate || new Date(2024, 11, 31), // Date par défaut si manquante
-            rawData: row,
-            errors,
-            warnings,
-            hasError: errors.length > 0,
-            hasWarning: warnings.length > 0
-        };
-    }).filter(task => task.name); // Filtrer les lignes sans nom
-    
-    createTable();
-    document.getElementById('importModal').classList.remove('is-active');
-}
+        const thead = document.createElement('tr');
+        thead.innerHTML = `
+            <th class="task-cell has-background-white">Action</th>
+            ${Array.from({length: months}, (_, i) => {
+                const date = new Date(2024, i, 1);
+                return `<th class="has-text-centered">${date.toLocaleDateString('fr', {month: 'short', year: '2-digit'})}</th>`;
+            }).join('')}
+        `;
+        table.appendChild(thead);
 
-// Fonction de création des barres de timeline modifiée
-function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
-    // Vérifier si les dates sont valides
-    const start = item.start instanceof Date ? item.start : new Date(2024, 0, 1);
-    const end = item.end instanceof Date ? item.end : new Date(2024, 11, 31);
-    
-    // S'assurer que les dates sont valides
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority} date-missing`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        timelineCell.appendChild(bar);
-        return;
+        let rowId = 0;
+        function createRows(items, level = 0) {
+            items.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'task-row';
+                if (item.hasError) {
+                    row.classList.add('has-error');
+                }
+                row.dataset.level = level;
+                const currentRowId = rowId++;
+                row.dataset.groupId = currentRowId;
+
+                const hasSubItems = item.tasks && item.tasks.length > 0;
+                if (hasSubItems) {
+                    row.classList.add('group-row');
+                }
+
+                const cell = document.createElement('td');
+                cell.className = `task-cell task-level-${level}`;
+
+                let cellContent = `
+                    ${hasSubItems ? 
+                        `<span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
+                            <i class="fas fa-chevron-down"></i>
+                        </span>` : 
+                        `<span class="group-icon"></span>`
+                    }
+                    <span class="group-name">${item.name}</span>
+                `;
+
+                if (item.hasError || item.hasWarning) {
+                    cellContent += `
+                        <span class="error-tooltip">
+                            ${item.hasError ? 
+                                `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
+                                `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
+                            }
+                            <span class="error-message">
+                                ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
+                                <ul class="error-list">
+                                    ${[...(item.errors || []), ...(item.warnings || [])].map(msg => `<li>${msg}</li>`).join('')}
+                                </ul>
+                            </span>
+                        </span>
+                    `;
+                }
+
+                cell.innerHTML = cellContent;
+                row.appendChild(cell);
+
+                let startMonth = 0;
+                let endMonth = months - 1;
+
+                if (item.start && item.start instanceof Date && !isNaN(item.start.getTime())) {
+                    startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+                }
+                
+                if (item.end && item.end instanceof Date && !isNaN(item.end.getTime())) {
+                    endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+                }
+
+                startMonth = Math.max(0, Math.min(startMonth, months - 1));
+                endMonth = Math.max(0, Math.min(endMonth, months - 1));
+                
+                for (let i = 0; i < months; i++) {
+                    const timelineCell = document.createElement('td');
+                    timelineCell.className = 'timeline-cell';
+                    timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+                    
+                    createTimelineBar(timelineCell, item, startMonth, endMonth, level, i);
+                    
+                    row.appendChild(timelineCell);
+                }
+                
+                table.appendChild(row);
+
+                if (item.tasks) {
+                    const subItems = item.tasks
+                        .filter(task => task && task.name)
+                        .map(task => ({
+                            ...task,
+                            tasks: []
+                        }));
+                    
+                    if (subItems.length > 0) {
+                        createRows(subItems, level + 1);
+                    }
+                }
+            });
+        }
+
+        if (tasks.length > 0) {
+            createRows(tasks);
+        }
+        
+        renderMilestones();
     }
 
-    if (item.hasError) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar is-invalid`;
-        bar.style.width = '100%';
-        timelineCell.appendChild(bar);
-        return;
+    function updateColumns() {
+        if (!currentWorkbook) return;
+        
+        const sheetSelect = document.getElementById('sheetSelect');
+        const sheet = currentWorkbook.Sheets[sheetSelect.value];
+        
+        const ref = XLSX.utils.decode_range(sheet['!ref']);
+        columns = [];
+        for(let C = ref.s.c; C <= ref.e.c; C++) {
+            const header = sheet[XLSX.utils.encode_cell({r:0, c:C})];
+            columns.push(header ? header.v : `Colonne ${C + 1}`);
+        }
+        
+        const savedConfig = loadConfiguration();
+        
+        const selects = ['name', 'subName', 'priority', 'startDate', 'endDate'];
+        selects.forEach(field => {
+            const select = document.getElementById(`map_${field}`);
+            select.innerHTML = `<option value="">Sélectionner...</option>` +
+                columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+                
+            if (savedConfig?.mapping?.[field] !== undefined) {
+                if (select.querySelector(`option[value="${savedConfig.mapping[field]}"]`)) {
+                    select.value = savedConfig.mapping[field];
+                }
+            }
+        });
+        
+        const primaryKeySelect = document.getElementById('primaryKeySelect');
+        primaryKeySelect.innerHTML = columns.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+        if (savedConfig?.primaryKeyColumn !== undefined) {
+            if (primaryKeySelect.querySelector(`option[value="${savedConfig.primaryKeyColumn}"]`)) {
+                primaryKeySelect.value = savedConfig.primaryKeyColumn;
+                primaryKeyColumn = savedConfig.primaryKeyColumn;
+            }
+        }
     }
 
-    // Calculer si la barre doit être affichée dans cette cellule
-    const currentStart = new Date(2024, i, 1);
-    const currentEnd = new Date(2024, i + 1, 0);
-    
-    if (!(end < currentStart || start > currentEnd)) {
-        const bar = document.createElement('div');
-        bar.className = `task-bar priority-${item.priority}`;
-        bar.style.width = '100%';
-        bar.style.opacity = level === 0 ? '0.3' : '0.8';
-        timelineCell.appendChild(bar);
-        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+    function showImportSettings() {
+        if (currentWorkbook) {
+            document.getElementById('importModal').classList.add('is-active');
+            document.getElementById('settingsMenu').classList.remove('is-active');
+        }
     }
-}
-    </script>
+
+    function importData() {
+        if (!currentWorkbook) return;
+        
+        saveConfiguration();
+        
+        const mapping = {};
+        ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+            mapping[field] = document.getElementById(`map_${field}`).value;
+        });
+        
+        const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+        const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
+        
+        tasks = rawData.map(row => {
+            const { errors, warnings } = validateTask(row, mapping);
+            const startDate = parseDate(row[columns[mapping.startDate]]);
+            const endDate = parseDate(row[columns[mapping.endDate]]);
+            
+            return {
+                name: row[columns[mapping.name]] || '(Sans nom)',
+                subName: mapping.subName ? row[columns[mapping.subName]] : null,
+                priority: parseInt(row[columns[mapping.priority]]) || 3,
+                start: startDate || new Date(2024, 0, 1),
+                end: endDate || new Date(2024, 11, 31),
+                rawData: row,
+                errors,
+                warnings,
+                hasError: errors.length > 0,
+                hasWarning: warnings.length > 0
+            };
+        }).filter(task => task.name);
+        
+        createTable();
+        document.getElementById('importModal').classList.remove('is-active');
+    }
+
+    document.getElementById('fileInput').onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            document.getElementById('fileName').textContent = file.name;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                currentWorkbook = XLSX.read(data, {type: 'array'});
+                
+                const sheetSelect = document.getElementById('sheetSelect');
+                sheetSelect.innerHTML = currentWorkbook.SheetNames.map(name =>
+                    `<option value="${name}">${name}</option>`
+                ).join('');
+
+                const savedConfig = loadConfiguration();
+                if (savedConfig?.lastSheet && sheetSelect.querySelector(`option[value="${savedConfig.lastSheet}"]`)) {
+                    sheetSelect.value = savedConfig.lastSheet;
+                }
+
+                sheetSelect.onchange = updateColumns;
+                updateColumns();
+                document.getElementById('importModal').classList.add('is-active');
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    };
+
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('milestoneMenu');
+        if (!menu.contains(e.target) && !e.target.classList.contains('milestone')) {
+            closeMilestoneMenu();
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedConfig = loadConfiguration();
+        if (savedConfig) {
+            primaryKeyColumn = savedConfig.primaryKeyColumn;
+        }
+        createTable();
+    });
+
+</script>
 </body>
 </html>
-               

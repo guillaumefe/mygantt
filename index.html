@@ -1099,9 +1099,9 @@ function toggleGroup(groupId) {
     }
 }
 
-// Mise à jour de la partie qui crée les cellules dans createRows
 function createRows(items, level = 0) {
     items.forEach(item => {
+        // Création de la ligne
         const row = document.createElement('tr');
         row.className = 'task-row';
         if (item.hasError) {
@@ -1111,16 +1111,20 @@ function createRows(items, level = 0) {
         const currentRowId = rowId++;
         row.dataset.groupId = currentRowId;
 
+        // Vérification des sous-éléments
         const hasSubItems = item.tasks && item.tasks.length > 0;
         if (hasSubItems) {
             row.classList.add('group-row');
         }
 
+        // Création de la cellule de titre
         const cell = document.createElement('td');
         cell.className = `task-cell task-level-${level}`;
 
+        // Construction du contenu de la cellule
         let cellContent = '';
-        // Ajouter l'icône de groupe avec le gestionnaire d'événements correct
+        
+        // Ajout de l'icône de pliage/dépliage pour les groupes
         if (hasSubItems) {
             cellContent = `
                 <span class="group-icon" onclick="toggleGroup(${currentRowId}); event.stopPropagation();">
@@ -1128,11 +1132,17 @@ function createRows(items, level = 0) {
                 </span>
             `;
         } else {
-            cellContent = '<span class="group-icon"></span>';
+            cellContent = `
+                <span class="group-icon">
+                    <i class="fas fa-minus"></i>
+                </span>
+            `;
         }
 
+        // Ajout du nom
         cellContent += `<span class="group-name">${item.name}</span>`;
 
+        // Ajout des indicateurs d'erreur/avertissement si nécessaire
         if (item.hasError || item.hasWarning) {
             cellContent += `
                 <span class="error-tooltip">
@@ -1153,8 +1163,70 @@ function createRows(items, level = 0) {
         cell.innerHTML = cellContent;
         row.appendChild(cell);
 
-        // Reste du code pour les cellules de timeline...
-        [... reste du code de createRows inchangé ...]
+        // Gestion des dates de début et fin
+        let startMonth = 0;
+        let endMonth = months - 1;
+
+        if (item.start && item.start instanceof Date && !isNaN(item.start.getTime())) {
+            startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+        }
+        
+        if (item.end && item.end instanceof Date && !isNaN(item.end.getTime())) {
+            endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+        }
+
+        // S'assurer que les mois sont dans les limites valides
+        startMonth = Math.max(0, Math.min(startMonth, months - 1));
+        endMonth = Math.max(0, Math.min(endMonth, months - 1));
+        
+        // Création des cellules de timeline
+        for (let i = 0; i < months; i++) {
+            const timelineCell = document.createElement('td');
+            timelineCell.className = 'timeline-cell';
+            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+            
+            // Création de la barre de timeline
+            if (i >= startMonth && i <= endMonth) {
+                const bar = document.createElement('div');
+                bar.className = `task-bar priority-${item.priority}`;
+                
+                // Gestion des états spéciaux (erreurs, dates manquantes)
+                if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
+                    bar.classList.add('date-missing');
+                } else if (item.hasError) {
+                    bar.classList.add('is-invalid');
+                }
+                
+                bar.style.width = '100%';
+                bar.style.opacity = level === 0 ? '0.3' : '0.8';
+                timelineCell.appendChild(bar);
+                
+                // Ajout du gestionnaire de clic droit pour les jalons
+                timelineCell.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    showMilestoneMenu(e, null, timelineCell);
+                });
+            }
+            
+            row.appendChild(timelineCell);
+        }
+        
+        // Ajout de la ligne au tableau
+        table.appendChild(row);
+
+        // Traitement récursif des sous-éléments
+        if (item.tasks) {
+            const subItems = item.tasks
+                .filter(task => task && task.name)  // Filtrer les tâches valides
+                .map(task => ({
+                    ...task,
+                    tasks: []
+                }));
+            
+            if (subItems.length > 0) {
+                createRows(subItems, level + 1);
+            }
+        }
     });
 }
 

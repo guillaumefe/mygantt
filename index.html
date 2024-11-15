@@ -174,6 +174,41 @@
         .file-input-wrapper {
             margin: 1em;
         }
+        /* Ajouter aux styles existants */
+        .task-bar.is-invalid {
+            background: repeating-linear-gradient(
+                45deg,
+                #ff3860,
+                #ff3860 10px,
+                #ffb3b3 10px,
+                #ffb3b3 20px
+            );
+            opacity: 0.5 !important;
+        }
+        
+        .task-bar.date-missing {
+            background: repeating-linear-gradient(
+                45deg,
+                currentColor,
+                currentColor 10px,
+                transparent 10px,
+                transparent 20px
+            );
+            opacity: 0.3 !important;
+        }
+        
+        .task-cell .status-icon {
+            margin-left: 8px;
+            font-size: 12px;
+        }
+        
+        .task-cell .invalid-dates {
+            color: #ff3860;
+        }
+        
+        .task-cell .missing-dates {
+            color: #ffdd57;
+        }
     </style>
 </head>
 <body>
@@ -1020,6 +1055,189 @@ function updateColumns() {
             primaryKeyColumn = savedConfig.primaryKeyColumn;
         }
     }
+}
+
+function validateTask(row, mapping) {
+    const errors = [];
+    const warnings = [];
+    
+    if (!row[columns[mapping.name]]) {
+        errors.push("Nom manquant");
+    }
+
+    const startDate = row[columns[mapping.startDate]] ? new Date(row[columns[mapping.startDate]]) : null;
+    const endDate = row[columns[mapping.endDate]] ? new Date(row[columns[mapping.endDate]]) : null;
+
+    if (!startDate && !endDate) {
+        warnings.push("Dates manquantes");
+    } else {
+        if (!startDate) warnings.push("Date de début manquante");
+        if (!endDate) warnings.push("Date de fin manquante");
+        
+        if (startDate && endDate && startDate > endDate) {
+            errors.push("La date de fin est antérieure à la date de début");
+        }
+        
+        if (startDate && isNaN(startDate.getTime())) {
+            errors.push("Date de début invalide");
+        }
+        if (endDate && isNaN(endDate.getTime())) {
+            errors.push("Date de fin invalide");
+        }
+    }
+
+    return { errors, warnings };
+}
+
+function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
+    if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority} date-missing`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        
+        const tooltip = document.createElement('div');
+        tooltip.className = 'error-tooltip';
+        tooltip.appendChild(bar);
+        
+        const message = document.createElement('span');
+        message.className = 'error-message';
+        message.textContent = 'Dates manquantes ou invalides';
+        tooltip.appendChild(message);
+        
+        timelineCell.appendChild(tooltip);
+        return;
+    }
+
+    if (item.hasError) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar is-invalid`;
+        bar.style.width = '100%';
+        timelineCell.appendChild(bar);
+        return;
+    }
+
+    if (i >= startMonth && i <= endMonth) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority}`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        timelineCell.appendChild(bar);
+        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+    }
+}
+
+function importData() {
+    if (!currentWorkbook) return;
+    
+    saveConfiguration();
+    
+    const mapping = {};
+    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+        mapping[field] = document.getElementById(`map_${field}`).value;
+    });
+    
+    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
+    
+    tasks = rawData.map(row => {
+        const { errors, warnings } = validateTask(row, mapping);
+        const startDate = row[columns[mapping.startDate]] ? new Date(row[columns[mapping.startDate]]) : null;
+        const endDate = row[columns[mapping.endDate]] ? new Date(row[columns[mapping.endDate]]) : null;
+        
+        return {
+            name: row[columns[mapping.name]] || '(Sans nom)',
+            subName: mapping.subName ? row[columns[mapping.subName]] : null,
+            priority: parseInt(row[columns[mapping.priority]]) || 3,
+            start: startDate,
+            end: endDate,
+            rawData: row,
+            errors,
+            warnings,
+            hasError: errors.length > 0,
+            hasWarning: warnings.length > 0
+        };
+    });
+    
+    createTable();
+    document.getElementById('importModal').classList.remove('is-active');
+}
+
+function createRows(items, level = 0) {
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        row.className = 'task-row';
+        if (item.hasError) {
+            row.classList.add('has-error');
+        }
+        row.dataset.level = level;
+        const currentRowId = rowId++;
+        row.dataset.groupId = currentRowId;
+
+        const hasSubItems = item.tasks && item.tasks.length > 0;
+        if (hasSubItems) {
+            row.classList.add('group-row');
+        }
+
+        const cell = document.createElement('td');
+        cell.className = `task-cell task-level-${level}`;
+
+        let cellContent = `
+            ${hasSubItems ? 
+                `<span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
+                    <i class="fas fa-chevron-down"></i>
+                </span>` : 
+                `<span class="group-icon"></span>`
+            }
+            <span class="group-name">${item.name}</span>
+        `;
+
+        if (item.hasError || item.hasWarning) {
+            cellContent += `
+                <span class="error-tooltip">
+                    ${item.hasError ? 
+                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
+                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
+                    }
+                    <span class="error-message">
+                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
+                        <ul class="error-list">
+                            ${item.errors.concat(item.warnings).map(msg => `<li>${msg}</li>`).join('')}
+                        </ul>
+                    </span>
+                </span>
+            `;
+        }
+
+        cell.innerHTML = cellContent;
+        row.appendChild(cell);
+
+        const startMonth = item.start ? (item.start.getFullYear() - 2024) * 12 + item.start.getMonth() : 0;
+        const endMonth = item.end ? (item.end.getFullYear() - 2024) * 12 + item.end.getMonth() : months - 1;
+        
+        for (let i = 0; i < months; i++) {
+            const timelineCell = document.createElement('td');
+            timelineCell.className = 'timeline-cell';
+            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+            
+            createTimelineBar(timelineCell, item, startMonth, endMonth, level, i);
+            
+            row.appendChild(timelineCell);
+        }
+        
+        table.appendChild(row);
+
+        if (item.tasks) {
+            const subItems = item.tasks.map(task => ({
+                ...task,
+                tasks: []
+            })).filter(task => task.name);
+            
+            if (subItems.length > 0) {
+                createRows(subItems, level + 1);
+            }
+        }
+    });
 }
         
     </script>

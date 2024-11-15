@@ -1239,6 +1239,133 @@ function createRows(items, level = 0) {
         }
     });
 }
+
+function createRows(items, level = 0) {
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        row.className = 'task-row';
+        if (item.hasError) {
+            row.classList.add('has-error');
+        }
+        row.dataset.level = level;
+        const currentRowId = rowId++;
+        row.dataset.groupId = currentRowId;
+
+        const hasSubItems = item.tasks && item.tasks.length > 0;
+        if (hasSubItems) {
+            row.classList.add('group-row');
+        }
+
+        const cell = document.createElement('td');
+        cell.className = `task-cell task-level-${level}`;
+
+        let cellContent = `
+            ${hasSubItems ? 
+                `<span class="group-icon" onclick="event.stopPropagation(); toggleGroup(${currentRowId})">
+                    <i class="fas fa-chevron-down"></i>
+                </span>` : 
+                `<span class="group-icon"></span>`
+            }
+            <span class="group-name">${item.name}</span>
+        `;
+
+        if (item.hasError || item.hasWarning) {
+            cellContent += `
+                <span class="error-tooltip">
+                    ${item.hasError ? 
+                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
+                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
+                    }
+                    <span class="error-message">
+                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
+                        <ul class="error-list">
+                            ${[...(item.errors || []), ...(item.warnings || [])].map(msg => `<li>${msg}</li>`).join('')}
+                        </ul>
+                    </span>
+                </span>
+            `;
+        }
+
+        cell.innerHTML = cellContent;
+        row.appendChild(cell);
+
+        // Calcul sécurisé des mois de début et de fin
+        let startMonth = 0;
+        let endMonth = months - 1;
+
+        if (item.start && item.start instanceof Date && !isNaN(item.start.getTime())) {
+            startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+        }
+        
+        if (item.end && item.end instanceof Date && !isNaN(item.end.getTime())) {
+            endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+        }
+
+        // Vérification que les mois sont dans les limites
+        startMonth = Math.max(0, Math.min(startMonth, months - 1));
+        endMonth = Math.max(0, Math.min(endMonth, months - 1));
+        
+        for (let i = 0; i < months; i++) {
+            const timelineCell = document.createElement('td');
+            timelineCell.className = 'timeline-cell';
+            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+            
+            createTimelineBar(timelineCell, item, startMonth, endMonth, level, i);
+            
+            row.appendChild(timelineCell);
+        }
+        
+        table.appendChild(row);
+
+        if (item.tasks) {
+            const subItems = item.tasks
+                .filter(task => task && task.name)  // S'assurer que la tâche existe et a un nom
+                .map(task => ({
+                    ...task,
+                    tasks: []
+                }));
+            
+            if (subItems.length > 0) {
+                createRows(subItems, level + 1);
+            }
+        }
+    });
+}
+
+function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
+    const hasValidDates = item.start && 
+                         item.end && 
+                         item.start instanceof Date && 
+                         item.end instanceof Date && 
+                         !isNaN(item.start.getTime()) && 
+                         !isNaN(item.end.getTime());
+
+    if (!hasValidDates) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority} date-missing`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        timelineCell.appendChild(bar);
+        return;
+    }
+
+    if (item.hasError) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar is-invalid`;
+        bar.style.width = '100%';
+        timelineCell.appendChild(bar);
+        return;
+    }
+
+    if (i >= startMonth && i <= endMonth) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority}`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        timelineCell.appendChild(bar);
+        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+    }
+}
         
     </script>
 </body>

@@ -1263,7 +1263,270 @@ const additionalStyles = `
     user-select: none;
 }
 `;
+
+// Passez la référence de la table en paramètre de createRows
+function createTable() {
+    const table = document.getElementById('ganttTable');
+    table.innerHTML = '';
     
+    const thead = document.createElement('tr');
+    thead.innerHTML = `
+        <th class="task-cell has-background-white">Action</th>
+        ${Array.from({length: months}, (_, i) => {
+            const date = new Date(2024, i, 1);
+            return `<th class="has-text-centered">${date.toLocaleDateString('fr', {month: 'short', year: '2-digit'})}</th>`;
+        }).join('')}
+    `;
+    table.appendChild(thead);
+
+    rowId = 0;
+    const groupedTasks = groupTasks(tasks);
+    
+    if (groupedTasks.length > 0) {
+        // Passer la référence de la table à createRows
+        createRows(groupedTasks, 0, table);
+    }
+    
+    renderMilestones();
+}
+
+function createRows(items, level = 0, table) {
+    items.forEach(item => {
+        // Création de la ligne
+        const row = document.createElement('tr');
+        row.className = 'task-row';
+        if (item.hasError) {
+            row.classList.add('has-error');
+        }
+        row.dataset.level = level;
+        const currentRowId = rowId++;
+        row.dataset.groupId = currentRowId;
+
+        // Vérification des sous-éléments
+        const hasSubItems = item.tasks && item.tasks.length > 0;
+        if (hasSubItems) {
+            row.classList.add('group-row');
+        }
+
+        // Création de la cellule de titre
+        const cell = document.createElement('td');
+        cell.className = `task-cell task-level-${level}`;
+
+        // Construction du contenu de la cellule
+        let cellContent = '';
+        
+        // Ajout de l'icône de pliage/dépliage pour les groupes
+        if (hasSubItems) {
+            cellContent = `
+                <span class="group-icon" onclick="toggleGroup(${currentRowId}); event.stopPropagation();">
+                    <i class="fas fa-chevron-down"></i>
+                </span>
+            `;
+        } else {
+            cellContent = `
+                <span class="group-icon">
+                    <i class="fas fa-minus"></i>
+                </span>
+            `;
+        }
+
+        // Ajout du nom
+        cellContent += `<span class="group-name">${item.name}</span>`;
+
+        // Ajout des indicateurs d'erreur/avertissement si nécessaire
+        if (item.hasError || item.hasWarning) {
+            cellContent += `
+                <span class="error-tooltip">
+                    ${item.hasError ? 
+                        `<i class="fas fa-exclamation-circle status-icon invalid-dates"></i>` : 
+                        `<i class="fas fa-exclamation-triangle status-icon missing-dates"></i>`
+                    }
+                    <span class="error-message">
+                        ${item.hasError ? 'Erreurs :' : 'Avertissements :'}
+                        <ul class="error-list">
+                            ${[...(item.errors || []), ...(item.warnings || [])].map(msg => `<li>${msg}</li>`).join('')}
+                        </ul>
+                    </span>
+                </span>
+            `;
+        }
+
+        cell.innerHTML = cellContent;
+        row.appendChild(cell);
+
+        // Gestion des dates de début et fin
+        let startMonth = 0;
+        let endMonth = months - 1;
+
+        if (item.start && item.start instanceof Date && !isNaN(item.start.getTime())) {
+            startMonth = (item.start.getFullYear() - 2024) * 12 + item.start.getMonth();
+        }
+        
+        if (item.end && item.end instanceof Date && !isNaN(item.end.getTime())) {
+            endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
+        }
+
+        // S'assurer que les mois sont dans les limites valides
+        startMonth = Math.max(0, Math.min(startMonth, months - 1));
+        endMonth = Math.max(0, Math.min(endMonth, months - 1));
+        
+        // Création des cellules de timeline
+        for (let i = 0; i < months; i++) {
+            const timelineCell = document.createElement('td');
+            timelineCell.className = 'timeline-cell';
+            timelineCell.dataset.cellId = `${currentRowId}_${i}`;
+            
+            // Création de la barre de timeline
+            if (i >= startMonth && i <= endMonth) {
+                const bar = document.createElement('div');
+                bar.className = `task-bar priority-${item.priority}`;
+                
+                // Gestion des états spéciaux (erreurs, dates manquantes)
+                if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
+                    bar.classList.add('date-missing');
+                } else if (item.hasError) {
+                    bar.classList.add('is-invalid');
+                }
+                
+                bar.style.width = '100%';
+                bar.style.opacity = level === 0 ? '0.3' : '0.8';
+                timelineCell.appendChild(bar);
+                
+                // Ajout du gestionnaire de clic droit pour les jalons
+                timelineCell.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    showMilestoneMenu(e, null, timelineCell);
+                });
+            }
+            
+            row.appendChild(timelineCell);
+        }
+        
+        // Ajout de la ligne au tableau
+        table.appendChild(row);
+
+        // Traitement récursif des sous-éléments
+        if (item.tasks) {
+            const subItems = item.tasks
+                .filter(task => task && task.name)  // Filtrer les tâches valides
+                .map(task => ({
+                    ...task,
+                    tasks: []
+                }));
+            
+            if (subItems.length > 0) {
+                // Appel récursif avec la référence à la table
+                createRows(subItems, level + 1, table);
+            }
+        }
+    });
+}
+
+// Assurez-vous également que la fonction toggleGroup est bien définie
+function toggleGroup(groupId) {
+    const row = document.querySelector(`[data-group-id="${groupId}"]`);
+    if (!row) return;
+    
+    const wasCollapsed = row.classList.toggle('is-collapsed');
+    const level = parseInt(row.dataset.level || '0');
+    
+    let next = row.nextElementSibling;
+    while (next) {
+        const nextLevel = parseInt(next.dataset.level || '0');
+        if (nextLevel <= level) break;
+        
+        if (wasCollapsed) {
+            next.classList.add('is-hidden-by-parent');
+            if (next.classList.contains('group-row') && !next.classList.contains('is-collapsed')) {
+                next.dataset.wasExpanded = 'true';
+            }
+        } else {
+            next.classList.remove('is-hidden-by-parent');
+            if (next.classList.contains('group-row') && next.dataset.wasExpanded === 'true') {
+                next.classList.remove('is-collapsed');
+                next.removeAttribute('data-was-expanded');
+            }
+        }
+        next = next.nextElementSibling;
+    }
+}
+
+function groupTasks(tasksList) {
+    const groups = {};
+    
+    tasksList.forEach(task => {
+        // Obtenir la clé primaire (le code du groupe)
+        const code = task.rawData[columns[primaryKeyColumn]] || '';
+        if (!code) return;
+        
+        // Initialiser le groupe s'il n'existe pas
+        if (!groups[code]) {
+            groups[code] = {
+                isGroup: true,
+                name: code,
+                priority: task.priority,
+                start: new Date(task.start),
+                end: new Date(task.end),
+                tasks: [],
+                errors: [],
+                warnings: [],
+                hasError: false,
+                hasWarning: false,
+                rawData: task.rawData
+            };
+        }
+
+        // Ajouter la sous-tâche si elle existe
+        if (task.subName) {
+            groups[code].tasks.push({
+                name: task.subName,
+                priority: task.priority,
+                start: task.start,
+                end: task.end,
+                errors: task.errors || [],
+                warnings: task.warnings || [],
+                hasError: task.hasError || false,
+                hasWarning: task.hasWarning || false
+            });
+        }
+
+        // Mettre à jour les dates du groupe
+        if (task.start && !isNaN(task.start.getTime())) {
+            groups[code].start = new Date(Math.min(groups[code].start.getTime(), task.start.getTime()));
+        }
+        if (task.end && !isNaN(task.end.getTime())) {
+            groups[code].end = new Date(Math.max(groups[code].end.getTime(), task.end.getTime()));
+        }
+
+        // Agréger les erreurs et avertissements au niveau du groupe
+        if (task.errors && task.errors.length > 0) {
+            groups[code].hasError = true;
+            groups[code].errors = [...new Set([...groups[code].errors, ...task.errors])];
+        }
+        if (task.warnings && task.warnings.length > 0) {
+            groups[code].hasWarning = true;
+            groups[code].warnings = [...new Set([...groups[code].warnings, ...task.warnings])];
+        }
+    });
+
+    // Convertir l'objet en tableau
+    return Object.values(groups).map(group => ({
+        ...group,
+        tasks: group.tasks.sort((a, b) => {
+            // Trier les sous-tâches par date
+            if (a.start && b.start) {
+                return a.start.getTime() - b.start.getTime();
+            }
+            return 0;
+        })
+    })).sort((a, b) => {
+        // Trier les groupes par date
+        if (a.start && b.start) {
+            return a.start.getTime() - b.start.getTime();
+        }
+        return 0;
+    });
+}
 </script>
 </body>
 </html>

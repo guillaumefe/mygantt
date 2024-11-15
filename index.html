@@ -1291,30 +1291,27 @@ function createTable() {
 
 function createRows(items, level = 0, table) {
     items.forEach(item => {
-        // Création de la ligne
         const row = document.createElement('tr');
         row.className = 'task-row';
-        if (item.hasError) {
+        
+        // N'ajouter la classe has-error que si c'est une action ou un sujet sans actions
+        if (item.hasError && (!item.isGroup || !item.tasks || item.tasks.length === 0)) {
             row.classList.add('has-error');
         }
         row.dataset.level = level;
         const currentRowId = rowId++;
         row.dataset.groupId = currentRowId;
 
-        // Vérification des sous-éléments
         const hasSubItems = item.tasks && item.tasks.length > 0;
         if (hasSubItems) {
             row.classList.add('group-row');
         }
 
-        // Création de la cellule de titre
         const cell = document.createElement('td');
         cell.className = `task-cell task-level-${level}`;
 
-        // Construction du contenu de la cellule
         let cellContent = '';
         
-        // Ajout de l'icône de pliage/dépliage pour les groupes
         if (hasSubItems) {
             cellContent = `
                 <span class="group-icon" onclick="toggleGroup(${currentRowId}); event.stopPropagation();">
@@ -1329,11 +1326,10 @@ function createRows(items, level = 0, table) {
             `;
         }
 
-        // Ajout du nom
         cellContent += `<span class="group-name">${item.name}</span>`;
 
-        // Ajout des indicateurs d'erreur/avertissement si nécessaire
-        if (item.hasError || item.hasWarning) {
+        // N'afficher les erreurs/avertissements que pour les actions ou les sujets sans actions
+        if ((item.hasError || item.hasWarning) && (!item.isGroup || !item.tasks || item.tasks.length === 0)) {
             cellContent += `
                 <span class="error-tooltip">
                     ${item.hasError ? 
@@ -1353,7 +1349,7 @@ function createRows(items, level = 0, table) {
         cell.innerHTML = cellContent;
         row.appendChild(cell);
 
-        // Gestion des dates de début et fin
+        // Reste du code pour les cellules de timeline...
         let startMonth = 0;
         let endMonth = months - 1;
 
@@ -1365,33 +1361,32 @@ function createRows(items, level = 0, table) {
             endMonth = (item.end.getFullYear() - 2024) * 12 + item.end.getMonth();
         }
 
-        // S'assurer que les mois sont dans les limites valides
         startMonth = Math.max(0, Math.min(startMonth, months - 1));
         endMonth = Math.max(0, Math.min(endMonth, months - 1));
         
-        // Création des cellules de timeline
         for (let i = 0; i < months; i++) {
             const timelineCell = document.createElement('td');
             timelineCell.className = 'timeline-cell';
             timelineCell.dataset.cellId = `${currentRowId}_${i}`;
             
-            // Création de la barre de timeline
+            // Ne pas afficher la barre comme invalide pour les groupes avec des actions
             if (i >= startMonth && i <= endMonth) {
                 const bar = document.createElement('div');
                 bar.className = `task-bar priority-${item.priority}`;
                 
-                // Gestion des états spéciaux (erreurs, dates manquantes)
-                if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
-                    bar.classList.add('date-missing');
-                } else if (item.hasError) {
-                    bar.classList.add('is-invalid');
+                // N'appliquer les classes d'erreur que pour les actions ou les sujets sans actions
+                if (!item.isGroup || !item.tasks || item.tasks.length === 0) {
+                    if (!item.start || !item.end || isNaN(item.start.getTime()) || isNaN(item.end.getTime())) {
+                        bar.classList.add('date-missing');
+                    } else if (item.hasError) {
+                        bar.classList.add('is-invalid');
+                    }
                 }
                 
                 bar.style.width = '100%';
                 bar.style.opacity = level === 0 ? '0.3' : '0.8';
                 timelineCell.appendChild(bar);
                 
-                // Ajout du gestionnaire de clic droit pour les jalons
                 timelineCell.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     showMilestoneMenu(e, null, timelineCell);
@@ -1401,22 +1396,10 @@ function createRows(items, level = 0, table) {
             row.appendChild(timelineCell);
         }
         
-        // Ajout de la ligne au tableau
         table.appendChild(row);
 
-        // Traitement récursif des sous-éléments
-        if (item.tasks) {
-            const subItems = item.tasks
-                .filter(task => task && task.name)  // Filtrer les tâches valides
-                .map(task => ({
-                    ...task,
-                    tasks: []
-                }));
-            
-            if (subItems.length > 0) {
-                // Appel récursif avec la référence à la table
-                createRows(subItems, level + 1, table);
-            }
+        if (item.tasks && item.tasks.length > 0) {
+            createRows(item.tasks, level + 1, table);
         }
     });
 }

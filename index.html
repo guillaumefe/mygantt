@@ -1366,7 +1366,146 @@ function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
         timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
     }
 }
+
+// Fonction utilitaire pour parser une date de manière sécurisée
+function parseDate(dateStr) {
+    if (!dateStr) return null;
+    
+    // Si c'est déjà un objet Date
+    if (dateStr instanceof Date) {
+        return isNaN(dateStr.getTime()) ? null : dateStr;
+    }
+    
+    // Essayer plusieurs formats de date
+    let date = null;
+    
+    // Format Excel (nombre de jours depuis 1900)
+    if (typeof dateStr === 'number') {
+        date = new Date((dateStr - 25569) * 86400 * 1000);
+        if (!isNaN(date.getTime())) return date;
+    }
+    
+    // Format string
+    if (typeof dateStr === 'string') {
+        // Essayer le parsing direct
+        date = new Date(dateStr);
+        if (!isNaN(date.getTime())) return date;
         
+        // Format DD/MM/YYYY
+        const parts = dateStr.split(/[\/\-\.]/);
+        if (parts.length === 3) {
+            // Essayer les deux formats possibles (DD/MM/YYYY et YYYY/MM/DD)
+            date = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+            if (!isNaN(date.getTime())) return date;
+            
+            date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            if (!isNaN(date.getTime())) return date;
+        }
+    }
+    
+    return null;
+}
+
+// Fonction de validation modifiée
+function validateTask(row, mapping) {
+    const errors = [];
+    const warnings = [];
+    
+    if (!row[columns[mapping.name]]) {
+        errors.push("Nom manquant");
+    }
+
+    const startDate = parseDate(row[columns[mapping.startDate]]);
+    const endDate = parseDate(row[columns[mapping.endDate]]);
+
+    if (!startDate && !endDate) {
+        warnings.push("Dates manquantes");
+    } else {
+        if (!startDate) warnings.push("Date de début manquante");
+        if (!endDate) warnings.push("Date de fin manquante");
+        
+        if (startDate && endDate && startDate > endDate) {
+            errors.push("La date de fin est antérieure à la date de début");
+        }
+    }
+
+    return { errors, warnings };
+}
+
+// Fonction d'import modifiée
+function importData() {
+    if (!currentWorkbook) return;
+    
+    saveConfiguration();
+    
+    const mapping = {};
+    ['name', 'subName', 'priority', 'startDate', 'endDate'].forEach(field => {
+        mapping[field] = document.getElementById(`map_${field}`).value;
+    });
+    
+    const sheet = currentWorkbook.Sheets[document.getElementById('sheetSelect').value];
+    const rawData = XLSX.utils.sheet_to_json(sheet, { header: columns });
+    
+    tasks = rawData.map(row => {
+        const { errors, warnings } = validateTask(row, mapping);
+        const startDate = parseDate(row[columns[mapping.startDate]]);
+        const endDate = parseDate(row[columns[mapping.endDate]]);
+        
+        return {
+            name: row[columns[mapping.name]] || '(Sans nom)',
+            subName: mapping.subName ? row[columns[mapping.subName]] : null,
+            priority: parseInt(row[columns[mapping.priority]]) || 3,
+            start: startDate || new Date(2024, 0, 1), // Date par défaut si manquante
+            end: endDate || new Date(2024, 11, 31), // Date par défaut si manquante
+            rawData: row,
+            errors,
+            warnings,
+            hasError: errors.length > 0,
+            hasWarning: warnings.length > 0
+        };
+    }).filter(task => task.name); // Filtrer les lignes sans nom
+    
+    createTable();
+    document.getElementById('importModal').classList.remove('is-active');
+}
+
+// Fonction de création des barres de timeline modifiée
+function createTimelineBar(timelineCell, item, startMonth, endMonth, level, i) {
+    // Vérifier si les dates sont valides
+    const start = item.start instanceof Date ? item.start : new Date(2024, 0, 1);
+    const end = item.end instanceof Date ? item.end : new Date(2024, 11, 31);
+    
+    // S'assurer que les dates sont valides
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority} date-missing`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        timelineCell.appendChild(bar);
+        return;
+    }
+
+    if (item.hasError) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar is-invalid`;
+        bar.style.width = '100%';
+        timelineCell.appendChild(bar);
+        return;
+    }
+
+    // Calculer si la barre doit être affichée dans cette cellule
+    const currentStart = new Date(2024, i, 1);
+    const currentEnd = new Date(2024, i + 1, 0);
+    
+    if (!(end < currentStart || start > currentEnd)) {
+        const bar = document.createElement('div');
+        bar.className = `task-bar priority-${item.priority}`;
+        bar.style.width = '100%';
+        bar.style.opacity = level === 0 ? '0.3' : '0.8';
+        timelineCell.appendChild(bar);
+        timelineCell.addEventListener('contextmenu', (e) => showMilestoneMenu(e, null, timelineCell));
+    }
+}
     </script>
 </body>
 </html>
